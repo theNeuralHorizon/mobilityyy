@@ -1,0 +1,30 @@
+# The ONLY hardcoded AprilTag knowledge we are allowed.
+#
+# `tag_id_to_label` is populated after the one-time teleop verification run
+# (see docs/P0_verification.md). The values below are placeholders based on
+# the geometric hypothesis; replace them after verification.
+#
+# `action_by_label` is canonical from Atharva (2026-04-17 19:29):
+#   Tag 1: LEFT, Tag 2: RIGHT, Tag 3: start GREEN, Tag 4: U-TURN, Tag 5: ORANGE
+#
+# apriltag_handler reads both.
+
+apriltag_handler:
+  ros__parameters:
+    tag_label_map:
+      # HYPOTHESIS — verify, replace with confirmed mapping.
+      "1": 1    # tag id 1 → logical label 1 → LEFT
+      "4": 2    # tag id 4 → logical label 2 → RIGHT
+      "0": 3    # tag id 0 → logical label 3 → GREEN
+      "3": 4    # tag id 3 → logical label 4 → U_TURN
+      "2": 5    # tag id 2 → logical label 5 → ORANGE
+    action_by_label:
+      "1": LEFT
+      "2": RIGHT
+      "3": GREEN
+      "4": U_TURN
+      "5": ORANGE
+    vote_window: 3
+    pixel_tolerance: 20.0
+    distance_tolerance_m: 0.05
+    approach_trigger_m: 1.5

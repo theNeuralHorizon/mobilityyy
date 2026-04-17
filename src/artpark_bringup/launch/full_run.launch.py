@@ -1,0 +1,112 @@
+"""Master launch — sim + robot + perception + decision + logger.
+
+Usage:
+  ros2 launch artpark_bringup full_run.launch.py spawn_yaw:=0.0
+
+Prereq: workspace is built and sourced, and the /front_cam topic is being
+bridged from Gazebo to ROS (handled by robot.launch.py).
+"""
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    bringup = FindPackageShare('artpark_bringup')
+    robot   = FindPackageShare('artpark_robot')
+
+    tag_yaml = PathJoinSubstitution([bringup, 'config', 'tag_label_map.yaml'])
+    hsv_yaml = PathJoinSubstitution([bringup, 'config', 'hsv_thresholds.yaml'])
+    nav_yaml = PathJoinSubstitution([bringup, 'config', 'navigation.yaml'])
+    apriltag_yaml = PathJoinSubstitution([bringup, 'config', 'apriltag.yaml'])
+
+    sim = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([bringup, 'launch', 'sim.launch.py']))
+    )
+
+    # Give Gazebo a couple seconds to finish booting before spawning the robot.
+    robot_spawn = TimerAction(
+        period=4.0,
+        actions=[IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(PathJoinSubstitution([robot, 'launch', 'robot.launch.py'])),
+            launch_arguments={
+                'spawn_x': LaunchConfiguration('spawn_x'),
+                'spawn_y': LaunchConfiguration('spawn_y'),
+                'spawn_yaw': LaunchConfiguration('spawn_yaw'),
+            }.items(),
+        )],
+    )
+
+    apriltag = Node(
+        package='apriltag_ros',
+        executable='apriltag_node',
+        name='apriltag_node',
+        parameters=[apriltag_yaml],
+        remappings=[
+            ('/image_rect', '/front_cam/image_raw'),
+            ('/camera_info', '/front_cam/camera_info'),
+            ('/detections', '/detections'),
+        ],
+        output='screen',
+    )
+
+    handler = Node(
+        package='artpark_perception',
+        executable='apriltag_handler',
+        name='apriltag_handler',
+        parameters=[tag_yaml],
+        output='screen',
+    )
+
+    floor = Node(
+        package='artpark_perception',
+        executable='floor_logo_detector',
+        name='floor_logo_detector',
+        parameters=[hsv_yaml],
+        output='screen',
+    )
+
+    obs = Node(
+        package='artpark_perception',
+        executable='obstacle_monitor',
+        name='obstacle_monitor',
+        parameters=[nav_yaml],
+        output='screen',
+    )
+
+    tile = Node(
+        package='artpark_decision',
+        executable='tile_tracker',
+        name='tile_tracker',
+        output='screen',
+    )
+
+    sm = Node(
+        package='artpark_decision',
+        executable='state_machine',
+        name='state_machine',
+        parameters=[nav_yaml],
+        output='screen',
+    )
+
+    logger = Node(
+        package='artpark_logger',
+        executable='logger_node',
+        name='logger_node',
+        output='screen',
+    )
+
+    # Perception + decision come up AFTER the robot (hence another delay).
+    downstream = TimerAction(period=7.0, actions=[apriltag, handler, floor, obs, tile, sm, logger])
+
+    return LaunchDescription([
+        DeclareLaunchArgument('spawn_x',   default_value='-1.35'),
+        DeclareLaunchArgument('spawn_y',   default_value='1.80'),
+        DeclareLaunchArgument('spawn_yaw', default_value='0.0'),
+        sim, robot_spawn, downstream,
+    ])

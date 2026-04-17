@@ -1,0 +1,13 @@
+# HSV thresholds for the floor logo detector.
+# Calibrate on the physical arena before the physical run — lighting differs.
+# Rough initial values based on the green.png / orange.png texture samples.
+
+floor_logo_detector:
+  ros__parameters:
+    hsv_green_low:  [35,  80,  60]
+    hsv_green_high: [85, 255, 255]
+    hsv_orange_low:  [ 5, 130, 120]
+    hsv_orange_high: [22, 255, 255]
+    edge_inset: 0.05
+    edge_depth: 0.15
+    publish_rate_hz: 8.0
