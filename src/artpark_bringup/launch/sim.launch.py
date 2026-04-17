@@ -11,19 +11,23 @@ def generate_launch_description():
     grid_world_share = get_package_share_directory('grid_world')
     world_path = os.path.join(grid_world_share, 'worlds', 'grid_world_FINAL.sdf')
 
-    # The installed SDF has had its absolute paths rewritten by
-    # grid_world/CMakeLists.txt to point at the install prefix, so it just
-    # works without any env-var gymnastics. Resource path is still useful
-    # as a fallback for any relative refs.
     gz_resource = SetEnvironmentVariable(
         name='GZ_SIM_RESOURCE_PATH',
-        value=os.path.dirname(grid_world_share),  # parent so "grid_world/..." resolves
+        value=os.path.dirname(grid_world_share),
     )
+
+    # Force Mesa software rendering — required for headless/WSL2 without a GPU.
+    # llvmpipe is the Mesa software renderer; LIBGL_ALWAYS_SOFTWARE forces it.
+    sw_render1 = SetEnvironmentVariable(name='LIBGL_ALWAYS_SOFTWARE', value='1')
+    sw_render2 = SetEnvironmentVariable(name='MESA_LOADER_DRIVER_OVERRIDE', value='llvmpipe')
+    sw_render3 = SetEnvironmentVariable(name='MESA_GL_VERSION_OVERRIDE', value='3.3')
 
     world = LaunchConfiguration('world')
 
+    # --headless-rendering: run Gazebo without a display window while still
+    # processing sensor rendering (cameras, lidar) via an offscreen context.
     gz_sim = ExecuteProcess(
-        cmd=['gz', 'sim', '-r', '-v', '3', world],
+        cmd=['gz', 'sim', '-r', '--headless-rendering', '-v', '3', world],
         output='screen',
     )
 
@@ -38,5 +42,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('world', default_value=world_path,
                               description='Path to the SDF world'),
-        gz_resource, gz_sim, clock_bridge,
+        gz_resource, sw_render1, sw_render2, sw_render3,
+        gz_sim, clock_bridge,
     ])

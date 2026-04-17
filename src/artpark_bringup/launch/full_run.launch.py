@@ -44,11 +44,13 @@ def generate_launch_description():
     # apriltag detection now runs in-process inside apriltag_handler (OpenCV
     # ArUco with DICT_APRILTAG_36h11) — no separate apriltag_ros node.
 
+    sim_time = {'use_sim_time': True}
+
     handler = Node(
         package='artpark_perception',
         executable='apriltag_handler',
         name='apriltag_handler',
-        parameters=[tag_yaml],
+        parameters=[tag_yaml, sim_time],
         output='screen',
     )
 
@@ -56,7 +58,7 @@ def generate_launch_description():
         package='artpark_perception',
         executable='floor_logo_detector',
         name='floor_logo_detector',
-        parameters=[hsv_yaml],
+        parameters=[hsv_yaml, sim_time],
         output='screen',
     )
 
@@ -64,7 +66,7 @@ def generate_launch_description():
         package='artpark_perception',
         executable='obstacle_monitor',
         name='obstacle_monitor',
-        parameters=[nav_yaml],
+        parameters=[nav_yaml, sim_time],
         output='screen',
     )
 
@@ -75,6 +77,7 @@ def generate_launch_description():
         parameters=[{
             'spawn_world_x': LaunchConfiguration('spawn_x'),
             'spawn_world_y': LaunchConfiguration('spawn_y'),
+            'use_sim_time': True,
         }],
         output='screen',
     )
@@ -85,6 +88,7 @@ def generate_launch_description():
         name='state_machine',
         parameters=[nav_yaml, {
             'debug_hold': LaunchConfiguration('debug_hold'),
+            'use_sim_time': True,
         }],
         output='screen',
     )
@@ -93,6 +97,7 @@ def generate_launch_description():
         package='artpark_logger',
         executable='logger_node',
         name='logger_node',
+        parameters=[sim_time],
         output='screen',
     )
 

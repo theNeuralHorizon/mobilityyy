@@ -252,7 +252,7 @@
   <gazebo reference="front_cam">
     <sensor name="front_cam" type="camera">
       <update_rate>20</update_rate>
-      <topic>front_cam/image_raw</topic>
+      <topic>/front_cam/image_raw</topic>
       <camera>
         <horizontal_fov>1.5184</horizontal_fov> <!-- ~87° to match D435i RGB -->
         <image><width>640</width><height>480</height><format>R8G8B8</format></image>
@@ -267,7 +267,7 @@
   <gazebo reference="floor_cam">
     <sensor name="floor_cam" type="camera">
       <update_rate>15</update_rate>
-      <topic>floor_cam/image_raw</topic>
+      <topic>/floor_cam/image_raw</topic>
       <camera>
         <horizontal_fov>1.047</horizontal_fov> <!-- 60° -->
         <image><width>320</width><height>240</height><format>R8G8B8</format></image>
@@ -278,11 +278,11 @@
     </sensor>
   </gazebo>
 
-  <!-- LiDAR -->
+  <!-- LiDAR - use cpu lidar for headless/WSL compatibility -->
   <gazebo reference="lidar_link">
-    <sensor name="lidar" type="gpu_lidar">
+    <sensor name="lidar" type="lidar">
       <update_rate>15</update_rate>
-      <topic>scan</topic>
+      <topic>/scan</topic>
       <lidar>
         <scan>
           <horizontal>
@@ -303,7 +303,7 @@
   <gazebo reference="imu_link">
     <sensor name="imu" type="imu">
       <update_rate>100</update_rate>
-      <topic>imu</topic>
+      <topic>/imu</topic>
       <always_on>true</always_on>
     </sensor>
   </gazebo>
