@@ -52,6 +52,8 @@ class VisionProcessor(Node):
         self.tile_counter = 0
         self.direction_tile_counter = {"green": 0, "orange": 0}
         self.last_tag_publish_times: dict[int, float] = {}
+        self.stop_frame_count = 0
+        self.stop_confirm_threshold = 5
 
         tag_labels = self.get_parameter("tag_id_to_label").value
         mapping = {idx: int(label) for idx, label in enumerate(tag_labels)}
@@ -104,6 +106,9 @@ class VisionProcessor(Node):
                 distance_m=float(detection.get("distance_m", 0.0)),
                 bearing_rad=float(detection.get("bearing_rad", 0.0)),
             )
+            if event is None:
+                self.get_logger().warn(f"Unmapped tag ID {tag_id}, skipping")
+                continue
             event["unix_timestamp"] = int(now)
             self.tag_pub.publish(String(data=json.dumps(event)))
             self.last_tag_publish_times[tag_id] = now
@@ -127,7 +132,15 @@ class VisionProcessor(Node):
         contour = find_largest_arrow_contour(active_mask)
         detected = contour is not None and cv2.contourArea(contour) > 300.0
         yaw_error = estimate_arrow_yaw_error(contour, roi.shape[1]) if detected else 0.0
-        stop_detected = bool(cv2.countNonZero(orange_mask) > 7000 and self.target_color == "orange")
+
+        # Ratio-based STOP detection with multi-frame confirmation
+        roi_area = max(orange_mask.shape[0] * orange_mask.shape[1], 1)
+        orange_ratio = cv2.countNonZero(orange_mask) / roi_area
+        if self.target_color == "orange" and orange_ratio > 0.15:
+            self.stop_frame_count += 1
+        else:
+            self.stop_frame_count = 0
+        stop_detected = self.stop_frame_count >= self.stop_confirm_threshold
 
         if detected and time.time() - self.last_tile_commit_time > 0.75:
             self.tile_counter += 1

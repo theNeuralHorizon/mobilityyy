@@ -2,7 +2,12 @@
 set -eo pipefail
 
 source /opt/ros/jazzy/setup.bash
-cd /mnt/c/MOBITITY/grid_world_hackathon/gaws_ws
+
+# Use the script's parent directory as the workspace root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="${WORKSPACE_DIR:-$SCRIPT_DIR}"
+
+cd "$WORKSPACE_DIR"
 source install/setup.bash
 
 LOG=/tmp/round3_full_run.log

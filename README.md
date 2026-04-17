@@ -11,12 +11,10 @@ Target stack: **ROS 2 Jazzy** on **Ubuntu 24.04**, **Gazebo Harmonic**.
 | Name | Role |
 |---|---|
 | `grid_world` | Judge's base world (UNTOUCHED) |
-| `artpark_msgs` | Custom msgs: `TagEvent`, `TileEvent`, `EdgeSample`, `Thought` |
-| `artpark_robot` | URDF + spawn launch (diff-drive, tilted RGB, floor cam, LiDAR, IMU) |
-| `artpark_perception` | `apriltag_handler`, `floor_logo_detector`, `obstacle_monitor` |
-| `artpark_decision` | `state_machine`, `tile_tracker`, edge-sampling logic |
-| `artpark_logger` | Per-run `judge_scorecard.csv`, `thought_log.jsonl`, images/ |
-| `artpark_bringup` | Master launch + all configs |
+| `rover_robot` | URDF + spawn launch (diff-drive, tilted RGB, floor cam, LiDAR, IMU) |
+| `rover_autonomy` | `vision_processor`, `state_machine_controller`, `safety_controller` + utilities |
+| `rover_logging` | Per-run `judge_scorecard.csv`, `thought_log.jsonl`, images/ |
+| `rover_bringup` | Master launch + all configs |
 
 ## Build
 ```bash
@@ -32,7 +30,7 @@ source install/setup.bash
 
 ## Run (full run)
 ```bash
-ros2 launch artpark_bringup full_run.launch.py spawn_yaw:=0.0
+ros2 launch rover_bringup full_stack.launch.py headless:=false spawn_yaw:=0.0
 ```
 Outputs land in `~/artpark_runs/<YYYYmmddTHHMMSS>/`.
 
@@ -40,15 +38,15 @@ Outputs land in `~/artpark_runs/<YYYYmmddTHHMMSS>/`.
 Before trusting the action mapping:
 ```bash
 # Terminal 1
-ros2 launch artpark_bringup teleop_verify.launch.py
+ros2 launch rover_bringup full_stack.launch.py headless:=false
 # Terminal 2
-ros2 topic echo /detections --field detections
+ros2 topic echo /tag_detections_native --field detections
 # Terminal 3
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 Drive past all 5 tags. Note which `id` appears at which map-labelled position
 (1..5 per the reference map). Edit
-`src/artpark_bringup/config/tag_label_map.yaml` to set `tag_id_to_label`
+`src/rover_bringup/config/tag_map.yaml` to set `tag_id_to_label`
 accordingly, then rebuild and do full runs.
 
 ## Hardcoding policy (per Atharva 2026-04-17)
@@ -68,8 +66,8 @@ Each run creates `~/artpark_runs/<stamp>/`:
 - `judge_scorecard.csv` — ONE row per scoreable event (tag log, tag decision,
   tile enter, color marker hit, stop reached). This is what the judges grade.
 - `thought_log.jsonl` — every node's reasoning, one JSON per line.
-- `raw_sensor.csv` — periodic edge-sample dump for post-hoc tuning.
-- `images/<stamp>_<seq>_<event>_tag<label>.png` — PNG per tag commit.
+- `tile_counts.jsonl` — periodic tile-count dump for post-hoc tuning.
+- `images/<stamp>_<seq>_tag<label>.png` — PNG per tag commit.
 
 ## Files you SHOULDN'T edit
 - Anything under `src/grid_world/` — byte-identical to the judge's zip.
