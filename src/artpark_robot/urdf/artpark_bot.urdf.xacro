@@ -169,9 +169,8 @@
   </joint>
 
   <!-- ================= GAZEBO / IGNITION TAGS ================= -->
-  <gazebo reference="base_link">
-    <material>Gazebo/Grey</material>
-  </gazebo>
+  <!-- Friction only; DON'T override material (URDF visuals already set colour
+       and Gazebo/Grey is deprecated — its warning broke rendering for us). -->
   <gazebo reference="wheel_left">
     <mu1>1.0</mu1><mu2>1.0</mu2>
   </gazebo>
@@ -182,7 +181,9 @@
     <mu1>0.0</mu1><mu2>0.0</mu2>
   </gazebo>
 
-  <!-- Differential drive plugin -->
+  <!-- Differential drive plugin.
+       Topic names are absolute (leading slash) so they don't get namespaced
+       under /model/artpark_bot/ — the bridge talks to /cmd_vel + /odom. -->
   <gazebo>
     <plugin filename="gz-sim-diff-drive-system"
             name="gz::sim::systems::DiffDrive">
@@ -190,8 +191,8 @@
       <right_joint>wheel_right_joint</right_joint>
       <wheel_separation>${wheel_sep}</wheel_separation>
       <wheel_radius>${wheel_rad}</wheel_radius>
-      <topic>cmd_vel</topic>
-      <odom_topic>odom</odom_topic>
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
       <frame_id>odom</frame_id>
       <child_frame_id>base_footprint</child_frame_id>
       <odom_publish_frequency>50</odom_publish_frequency>
@@ -199,7 +200,7 @@
     </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system"
             name="gz::sim::systems::JointStatePublisher">
-      <topic>joint_states</topic>
+      <topic>/joint_states</topic>
     </plugin>
   </gazebo>
 

@@ -72,6 +72,10 @@ def generate_launch_description():
         package='artpark_decision',
         executable='tile_tracker',
         name='tile_tracker',
+        parameters=[{
+            'spawn_world_x': LaunchConfiguration('spawn_x'),
+            'spawn_world_y': LaunchConfiguration('spawn_y'),
+        }],
         output='screen',
     )
 

@@ -348,10 +348,11 @@ class StateMachine(Node):
 
     @staticmethod
     def _edge_to_yaw(edge: str) -> float:
-        # With the robot spawned facing +x (yaw=0), N=forward=+x=yaw 0.
-        # This is a ROBOT-RELATIVE mapping; the tile N/S/E/W here is robot-
-        # relative since the floor cam is body-fixed.
-        return {'N': 0.0, 'E': -math.pi / 2, 'S': math.pi, 'W': math.pi / 2}[edge]
+        # Compass convention matching tile_tracker.edge_crossed:
+        #   N = +y (row decreases), S = -y (row increases),
+        #   E = +x (col increases), W = -x (col decreases).
+        # Yaw is ROS standard: 0 faces +x, π/2 faces +y, π faces -x, -π/2 faces -y.
+        return {'N': math.pi / 2, 'S': -math.pi / 2, 'E': 0.0, 'W': math.pi}[edge]
 
     # ================================================================
     def _publish(self, cmd: Twist) -> None:

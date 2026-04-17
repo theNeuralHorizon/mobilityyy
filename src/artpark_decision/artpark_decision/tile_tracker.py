@@ -48,6 +48,13 @@ class TileTracker(Node):
     def __init__(self) -> None:
         super().__init__('tile_tracker')
 
+        # Odom starts at (0, 0) relative to spawn; translate to world via the
+        # known spawn pose so tile indexing is correct.
+        self.declare_parameter('spawn_world_x', -1.35)
+        self.declare_parameter('spawn_world_y',  1.80)
+        self.spawn_wx = float(self.get_parameter('spawn_world_x').value)
+        self.spawn_wy = float(self.get_parameter('spawn_world_y').value)
+
         self._prev_tile: Optional[tuple[int, int]] = None
         self._last_yaw: float = 0.0
         self._seq = 0
@@ -58,11 +65,13 @@ class TileTracker(Node):
         self.sub_odom = self.create_subscription(Odometry, '/odom', self._on_odom, qos_odom)
         self.pub_tile = self.create_publisher(TileEvent, '/tile_event', qos)
         self.pub_thought = self.create_publisher(Thought, '/thought', qos)
-        self.get_logger().info('tile_tracker up')
+        self.get_logger().info(
+            f'tile_tracker up | odom origin -> world ({self.spawn_wx}, {self.spawn_wy})')
 
     def _on_odom(self, msg: Odometry) -> None:
-        x = msg.pose.pose.position.x
-        y = msg.pose.pose.position.y
+        # Translate odom-frame pose into world-frame pose.
+        world_x = msg.pose.pose.position.x + self.spawn_wx
+        world_y = msg.pose.pose.position.y + self.spawn_wy
         q = msg.pose.pose.orientation
         # yaw from quaternion
         self._last_yaw = math.atan2(
@@ -70,7 +79,7 @@ class TileTracker(Node):
             1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         )
 
-        tile = world_to_tile(x, y)
+        tile = world_to_tile(world_x, world_y)
         if self._prev_tile is None:
             self._prev_tile = tile
             return
@@ -98,7 +107,10 @@ class TileTracker(Node):
         t.action_chosen = 'publish_tile_event'
         t.rule_applied = 'tile_tracker.odom_grid_discretize'
         t.alt_considered = ''
-        t.extras_json = f'{{"x":{x:.3f},"y":{y:.3f},"yaw_deg":{math.degrees(self._last_yaw):.1f}}}'
+        t.extras_json = (
+            f'{{"world_x":{world_x:.3f},"world_y":{world_y:.3f},'
+            f'"yaw_deg":{math.degrees(self._last_yaw):.1f}}}'
+        )
         t.confidence = 0.95
         self.pub_thought.publish(t)
 
