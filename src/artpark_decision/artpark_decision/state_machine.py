@@ -104,6 +104,9 @@ class StateMachine(Node):
 
         # 20 Hz tick drives motion
         self.timer = self.create_timer(0.05, self._tick)
+        # 0.5 Hz heartbeat so operators see what the node is doing.
+        self._heartbeat_timer = self.create_timer(2.0, self._heartbeat)
+        self._prev_phase_logged = None
 
         self._octants = [float('inf')] * 8
         self.get_logger().info('state_machine up, entering INIT')
@@ -171,8 +174,19 @@ class StateMachine(Node):
         )
 
     # ================================================================
+    def _heartbeat(self) -> None:
+        """2 Hz human-visible status — phase + tile + tag-log count."""
+        self.get_logger().info(
+            f'PHASE={self.s.phase.name} | tile={self.s.tile_rc} | '
+            f'entry_edge={self.s.entry_edge} | tags_logged={sorted(self.s.tags_logged)} | '
+            f'yaw={math.degrees(self.s.current_yaw):.0f}° | '
+            f'obs_near={self.s.obstacle_near} | approach={self.s.approach_mode}')
+
     def _tick(self) -> None:
         ph = self.s.phase
+        if ph != self._prev_phase_logged:
+            self.get_logger().info(f'PHASE TRANSITION → {ph.name}')
+            self._prev_phase_logged = ph
         cmd = Twist()
 
         if ph == Phase.INIT:
