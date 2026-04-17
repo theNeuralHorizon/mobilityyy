@@ -67,21 +67,30 @@ def generate_launch_description():
     ])
 
     # Topic bridges: Gazebo ↔ ROS 2
+    # Direction symbols (ros_gz_bridge v>=0.244):
+    #   @  bidirectional (only when truly needed)
+    #   [  GZ publisher → ROS subscriber (sensor data, odom, tf)
+    #   ]  ROS publisher → GZ subscriber (commands)
+    # Making these one-way avoids feedback loops where our ROS-side
+    # publishers (robot_state_publisher etc.) re-publish to GZ and
+    # confuse the physics engine.
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='gz_bridge',
         arguments=[
-            '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
-            '/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry',
-            '/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
-            '/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
-            '/imu@sensor_msgs/msg/Imu@gz.msgs.IMU',
-            '/joint_states@sensor_msgs/msg/JointState@gz.msgs.Model',
-            '/front_cam/image_raw@sensor_msgs/msg/Image@gz.msgs.Image',
-            '/front_cam/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo',
-            '/floor_cam/image_raw@sensor_msgs/msg/Image@gz.msgs.Image',
-            '/floor_cam/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo',
+            # Commands: ROS → GZ
+            '/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+            # Sensor / state: GZ → ROS
+            '/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
+            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+            '/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+            '/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
+            '/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
+            '/front_cam/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/front_cam/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+            '/floor_cam/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/floor_cam/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
         ],
         output='screen',
     )
