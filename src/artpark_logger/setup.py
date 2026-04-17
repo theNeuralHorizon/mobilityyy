@@ -22,7 +22,7 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'logger_node = artpark_logger.logger_node:main',
+            'logger_node=artpark_logger.logger_node:main',
         ],
     },
 )

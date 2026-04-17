@@ -23,9 +23,9 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'apriltag_handler  = artpark_perception.apriltag_handler:main',
-            'floor_logo_detector = artpark_perception.floor_logo_detector:main',
-            'obstacle_monitor  = artpark_perception.obstacle_monitor:main',
+            'apriltag_handler=artpark_perception.apriltag_handler:main',
+            'floor_logo_detector=artpark_perception.floor_logo_detector:main',
+            'obstacle_monitor=artpark_perception.obstacle_monitor:main',
         ],
     },
 )

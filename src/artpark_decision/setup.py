@@ -23,8 +23,8 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'state_machine = artpark_decision.state_machine:main',
-            'tile_tracker  = artpark_decision.tile_tracker:main',
+            'state_machine=artpark_decision.state_machine:main',
+            'tile_tracker=artpark_decision.tile_tracker:main',
         ],
     },
 )
