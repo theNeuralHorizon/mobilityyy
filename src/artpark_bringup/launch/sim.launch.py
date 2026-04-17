@@ -11,11 +11,13 @@ def generate_launch_description():
     grid_world_share = get_package_share_directory('grid_world')
     world_path = os.path.join(grid_world_share, 'worlds', 'grid_world_FINAL.sdf')
 
-    # Tell Gazebo where to find our tile textures (the SDF references absolute
-    # paths in the judge's config; override with an env var resource path).
+    # The installed SDF has had its absolute paths rewritten by
+    # grid_world/CMakeLists.txt to point at the install prefix, so it just
+    # works without any env-var gymnastics. Resource path is still useful
+    # as a fallback for any relative refs.
     gz_resource = SetEnvironmentVariable(
         name='GZ_SIM_RESOURCE_PATH',
-        value=grid_world_share,
+        value=os.path.dirname(grid_world_share),  # parent so "grid_world/..." resolves
     )
 
     world = LaunchConfiguration('world')
