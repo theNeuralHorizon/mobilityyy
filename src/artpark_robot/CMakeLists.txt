@@ -3,7 +3,7 @@ project(artpark_robot)
 
 find_package(ament_cmake REQUIRED)
 
-install(DIRECTORY launch urdf config meshes
+install(DIRECTORY launch urdf
   DESTINATION share/${PROJECT_NAME})
 
 ament_package()
