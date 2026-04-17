@@ -115,11 +115,15 @@ def compute_wall_follow_command(
 ) -> tuple[float, float]:
     """Right-hand wall-following: stay near the right wall.
 
-    - If front blocked -> turn left
-    - If right wall present and at good distance -> drive straight
-    - If right side too close -> veer left slightly
-    - If right side too far / open -> turn right to seek wall
+    - Corner (front + right blocked) -> spin left hard
+    - Front blocked -> turn left
+    - Right wall present and at good distance -> drive straight
+    - Right side too close -> veer left slightly
+    - Right side too far / open -> turn right to seek wall
     """
+    if front_min < front_threshold and right_min < wall_follow_distance:
+        # Corner: both front and right blocked — spin left in place
+        return 0.0, 0.8
     if front_min < front_threshold:
         # Wall ahead — turn left
         return 0.05, 0.6
@@ -250,9 +254,10 @@ class StateMachineController(Node):
 
     def _tick(self) -> None:
         cmd = Twist()
-        if not self.state.latest_clearance_ok:
-            self.cmd_pub.publish(cmd)
-            return
+        # NOTE: Do NOT gate on clearance here. The safety controller
+        # already overrides unsafe commands on /cmd_vel. If we send
+        # zero when clearance is False, the safety controller has
+        # nothing useful to work with and the robot freezes.
 
         if self.state.phase in EXPLORE_PHASES:
             # Wall-following exploration

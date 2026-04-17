@@ -130,6 +130,16 @@ def test_wall_follow_veers_left_when_right_too_close():
     assert angular > 0.0  # veer left
 
 
+def test_wall_follow_corner_escape_spins_left():
+    """When both front and right are blocked (corner), spin left in place."""
+    linear, angular = compute_wall_follow_command(
+        front_min=0.25, left_min=1.0, right_min=0.2,
+        linear_speed=0.18, wall_follow_distance=0.35,
+    )
+    assert linear == 0.0  # no forward motion
+    assert angular > 0.6  # aggressive left spin
+
+
 # --- _normalize_angle ---
 
 def test_normalize_angle_positive():
