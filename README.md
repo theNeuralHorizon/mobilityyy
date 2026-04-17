@@ -21,7 +21,11 @@ Target stack: **ROS 2 Jazzy** on **Ubuntu 24.04**, **Gazebo Harmonic**.
 ## Build
 ```bash
 cd ~/gaws_ws
-rosdep install --from-paths src --ignore-src -r -y
+# AprilTag detection uses pupil_apriltags (cv2.aruco AprilTag support
+# segfaults on Ubuntu 24.04's OpenCV 4.6).
+pip install --break-system-packages pupil-apriltags
+
+rosdep install --from-paths src --ignore-src -r -y --skip-keys "ament_python"
 colcon build --symlink-install
 source install/setup.bash
 ```

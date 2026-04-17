@@ -75,25 +75,37 @@ class AprilTagHandler(Node):
         self.id_to_label:  Dict[int, int] = {int(k): int(v) for k, v in raw_id_map.items()}
         self.label_to_act: Dict[int, str] = {int(k): str(v) for k, v in raw_act_map.items()}
 
-        # ---------------- OpenCV ArUco detector (version-agnostic) ----------------
-        self._aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-        # DetectorParameters: class in 4.7+, factory function in older releases.
+        # ---------------- AprilTag detector ----------------
+        # pupil_apriltags is the primary: pure Python binding over the C
+        # apriltag library, stable across distros. cv2.aruco 4.6 segfaults
+        # on 36h11 (Ubuntu 24.04 stock) so we avoid it unless necessary.
+        self._pupil_detector = None
+        self._cv_detect_fn = None
         try:
-            self._aruco_params = cv2.aruco.DetectorParameters()
-        except AttributeError:
-            self._aruco_params = cv2.aruco.DetectorParameters_create()
-        # ArucoDetector class exists only in OpenCV >= 4.7. Fall back to the
-        # module-level detectMarkers() for Ubuntu 24.04's stock OpenCV 4.6.
-        if hasattr(cv2.aruco, 'ArucoDetector'):
-            detector = cv2.aruco.ArucoDetector(self._aruco_dict, self._aruco_params)
-            self._detect_fn = detector.detectMarkers
-            self.get_logger().info('Using OpenCV 4.7+ ArucoDetector class')
-        else:
-            _dict = self._aruco_dict
-            _params = self._aruco_params
-            self._detect_fn = lambda gray: cv2.aruco.detectMarkers(
-                gray, _dict, parameters=_params)
-            self.get_logger().info('Using legacy cv2.aruco.detectMarkers (OpenCV < 4.7)')
+            from pupil_apriltags import Detector as _ATDetector  # type: ignore
+            self._pupil_detector = _ATDetector(
+                families='tag36h11',
+                nthreads=2,
+                quad_decimate=1.0,
+                refine_edges=True,
+            )
+            self.get_logger().info('Using pupil_apriltags (tag36h11)')
+        except ImportError:
+            self.get_logger().warn(
+                'pupil_apriltags not installed — falling back to cv2.aruco '
+                '(WARNING: segfaults on OpenCV 4.6). '
+                'Install with: pip install --break-system-packages pupil-apriltags')
+            self._aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+            try:
+                params = cv2.aruco.DetectorParameters()
+            except AttributeError:
+                params = cv2.aruco.DetectorParameters_create()
+            if hasattr(cv2.aruco, 'ArucoDetector'):
+                det = cv2.aruco.ArucoDetector(self._aruco_dict, params)
+                self._cv_detect_fn = det.detectMarkers
+            else:
+                _d, _p = self._aruco_dict, params
+                self._cv_detect_fn = lambda g: cv2.aruco.detectMarkers(g, _d, parameters=_p)
 
         # ---------------- state ----------------
         self._buffers: Dict[int, Deque[DetectionSample]] = {}
@@ -122,30 +134,42 @@ class AprilTagHandler(Node):
             self.get_logger().warn(f'cv_bridge failure: {exc}')
             return
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        result = self._detect_fn(gray)
-        # Both APIs return (corners, ids, rejected) — legacy also returns the
-        # same tuple shape.
-        corners_list, ids = result[0], result[1]
+        gray = np.ascontiguousarray(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), dtype=np.uint8)
 
-        if ids is None or len(ids) == 0:
+        # Normalise detections from either backend into a common list of
+        # (tag_id, corners_4x2_ndarray).
+        detections: list[tuple[int, np.ndarray]] = []
+        if self._pupil_detector is not None:
+            try:
+                for d in self._pupil_detector.detect(gray):
+                    detections.append((int(d.tag_id), np.asarray(d.corners, dtype=np.float32)))
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warn(f'pupil_apriltags failure: {exc}')
+        else:
+            try:
+                res = self._cv_detect_fn(gray)
+                cl, ids = res[0], res[1]
+                if ids is not None and len(ids) > 0:
+                    for i, tid in enumerate(ids.flatten().tolist()):
+                        detections.append((int(tid), cl[i].reshape(4, 2).astype(np.float32)))
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warn(f'cv2.aruco failure: {exc}')
+
+        if not detections:
             self.pub_approach.publish(Bool(data=False))
             return
 
         any_candidate = False
-        for i, tag_id in enumerate(ids.flatten().tolist()):
-            tag_id = int(tag_id)
-            corners = corners_list[i].reshape(4, 2)
+        for tag_id, corners in detections:
             cx = float(corners[:, 0].mean())
             cy = float(corners[:, 1].mean())
-            # average edge length in pixels
             edges = [
                 float(np.linalg.norm(corners[(k + 1) % 4] - corners[k]))
                 for k in range(4)
             ]
             pixel_size = float(sum(edges) / 4.0)
             if pixel_size < self.min_tag_px:
-                continue  # too small / too far; don't commit yet
+                continue
 
             sample = DetectionSample(tag_id=tag_id, cx=cx, cy=cy,
                                      pixel_size=pixel_size, corners=corners)
