@@ -16,6 +16,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventH
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -27,7 +28,7 @@ def generate_launch_description():
     spawn_y   = LaunchConfiguration('spawn_y')
     spawn_yaw = LaunchConfiguration('spawn_yaw')
 
-    robot_description = Command(['xacro ', xacro])
+    robot_description = ParameterValue(Command(['xacro ', xacro]), value_type=str)
 
     rsp = Node(
         package='robot_state_publisher',

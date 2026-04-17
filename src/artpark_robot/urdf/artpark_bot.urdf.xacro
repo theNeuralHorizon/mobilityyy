@@ -278,9 +278,10 @@
     </sensor>
   </gazebo>
 
-  <!-- LiDAR - use cpu lidar for headless/WSL compatibility -->
+  <!-- LiDAR: gpu_lidar required by Gazebo Harmonic (cpu lidar unsupported).
+       Works headless via headless_rendering flag plus Mesa llvmpipe. -->
   <gazebo reference="lidar_link">
-    <sensor name="lidar" type="lidar">
+    <sensor name="lidar" type="gpu_lidar">
       <update_rate>15</update_rate>
       <topic>/scan</topic>
       <lidar>

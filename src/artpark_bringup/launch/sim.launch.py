@@ -21,13 +21,18 @@ def generate_launch_description():
     sw_render1 = SetEnvironmentVariable(name='LIBGL_ALWAYS_SOFTWARE', value='1')
     sw_render2 = SetEnvironmentVariable(name='MESA_LOADER_DRIVER_OVERRIDE', value='llvmpipe')
     sw_render3 = SetEnvironmentVariable(name='MESA_GL_VERSION_OVERRIDE', value='3.3')
+    # Qt offscreen platform — prevents "could not connect to display" crash
+    # when running without X11/Wayland (WSL2 headless, CI, SSH).
+    qt_offscreen = SetEnvironmentVariable(name='QT_QPA_PLATFORM', value='offscreen')
 
     world = LaunchConfiguration('world')
 
     # --headless-rendering: run Gazebo without a display window while still
     # processing sensor rendering (cameras, lidar) via an offscreen context.
+    # -s: server-only mode (no GUI process). Combined with QT_QPA_PLATFORM=offscreen
+    # this ensures fully headless operation on WSL2/CI.
     gz_sim = ExecuteProcess(
-        cmd=['gz', 'sim', '-r', '--headless-rendering', '-v', '3', world],
+        cmd=['gz', 'sim', '-r', '-s', '--headless-rendering', '-v', '3', world],
         output='screen',
     )
 
@@ -42,6 +47,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('world', default_value=world_path,
                               description='Path to the SDF world'),
-        gz_resource, sw_render1, sw_render2, sw_render3,
+        gz_resource, sw_render1, sw_render2, sw_render3, qt_offscreen,
         gz_sim, clock_bridge,
     ])
