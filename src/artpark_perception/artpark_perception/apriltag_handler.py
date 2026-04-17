@@ -75,10 +75,25 @@ class AprilTagHandler(Node):
         self.id_to_label:  Dict[int, int] = {int(k): int(v) for k, v in raw_id_map.items()}
         self.label_to_act: Dict[int, str] = {int(k): str(v) for k, v in raw_act_map.items()}
 
-        # ---------------- OpenCV ArUco detector ----------------
+        # ---------------- OpenCV ArUco detector (version-agnostic) ----------------
         self._aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-        self._aruco_params = cv2.aruco.DetectorParameters()
-        self._detector = cv2.aruco.ArucoDetector(self._aruco_dict, self._aruco_params)
+        # DetectorParameters: class in 4.7+, factory function in older releases.
+        try:
+            self._aruco_params = cv2.aruco.DetectorParameters()
+        except AttributeError:
+            self._aruco_params = cv2.aruco.DetectorParameters_create()
+        # ArucoDetector class exists only in OpenCV >= 4.7. Fall back to the
+        # module-level detectMarkers() for Ubuntu 24.04's stock OpenCV 4.6.
+        if hasattr(cv2.aruco, 'ArucoDetector'):
+            detector = cv2.aruco.ArucoDetector(self._aruco_dict, self._aruco_params)
+            self._detect_fn = detector.detectMarkers
+            self.get_logger().info('Using OpenCV 4.7+ ArucoDetector class')
+        else:
+            _dict = self._aruco_dict
+            _params = self._aruco_params
+            self._detect_fn = lambda gray: cv2.aruco.detectMarkers(
+                gray, _dict, parameters=_params)
+            self.get_logger().info('Using legacy cv2.aruco.detectMarkers (OpenCV < 4.7)')
 
         # ---------------- state ----------------
         self._buffers: Dict[int, Deque[DetectionSample]] = {}
@@ -108,7 +123,10 @@ class AprilTagHandler(Node):
             return
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners_list, ids, _rejected = self._detector.detectMarkers(gray)
+        result = self._detect_fn(gray)
+        # Both APIs return (corners, ids, rejected) — legacy also returns the
+        # same tuple shape.
+        corners_list, ids = result[0], result[1]
 
         if ids is None or len(ids) == 0:
             self.pub_approach.publish(Bool(data=False))
