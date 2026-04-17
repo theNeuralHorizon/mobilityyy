@@ -1,28 +1,39 @@
-"""AprilTag handler — wraps raw apriltag_ros detections with a 3-frame vote
-and emits a committed TagEvent only after vote passes. This is the module
-that turns noisy detections into scoreable logs.
+"""AprilTag handler — in-process OpenCV-ArUco detection + 3-frame vote.
 
-Rules enforced here:
-- 3 consecutive frames with same id, center pixel within 20 px, distance within 5 cm.
-- Slow-down publish on /approach_mode whenever a candidate is in-frame but not yet committed.
-- Logical-label lookup from config/tag_label_map.yaml — this is THE ONLY
-  hardcoded AprilTag knowledge we're allowed per Atharva.
+Why we don't use apriltag_ros
+-----------------------------
+The ros-jazzy-apriltag-ros / ros-jazzy-apriltag-msgs packages ship with a
+FastCDR ABI mismatch on stock Ubuntu 24.04; the detector binary dies with
+`undefined symbol: _ZN8eprosima7fastcdr3Cdr9serializeEj`. Rather than
+patching ABIs, we run detection in-process using OpenCV's built-in
+DICT_APRILTAG_36h11 ArUco dictionary — same tag family, no apriltag_ros
+dependency, no FastCDR drama.
+
+Rules enforced:
+  * 3 consecutive frames agreeing on tag_id and centre (<20 px) → commit.
+  * Slow-down publish on /approach_mode while a candidate is in frame.
+  * id → logical-label lookup from config/tag_label_map.yaml as a JSON
+    string (ROS 2 parameters don't support dicts natively).
 """
 from __future__ import annotations
 
+import json
 import math
 import threading
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, Optional
 
+import cv2
+import numpy as np
 import rclpy
+from cv_bridge import CvBridge
+from geometry_msgs.msg import Pose
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
-from geometry_msgs.msg import Pose
 
-from apriltag_msgs.msg import AprilTagDetectionArray  # from apriltag_ros Jazzy
 from artpark_msgs.msg import TagEvent, Thought
 
 
@@ -31,86 +42,108 @@ class DetectionSample:
     tag_id: int
     cx: float
     cy: float
-    z: float          # camera-frame forward distance
-    pose: Pose
+    pixel_size: float   # avg edge length in px, used for distance estimate
+    corners: np.ndarray
 
 
 class AprilTagHandler(Node):
     def __init__(self) -> None:
         super().__init__('apriltag_handler')
 
-        # ---------------- parameters ----------------
-        self.declare_parameter('vote_window',       3)
-        self.declare_parameter('pixel_tolerance',   20.0)
-        self.declare_parameter('distance_tolerance_m', 0.05)
-        self.declare_parameter('approach_trigger_m',   1.5)
-        self.declare_parameter('tag_label_map', {})     # {id:int → label:int}
-        self.declare_parameter('action_by_label', {})   # {label:int → action:str}
+        # ---------------- parameters (JSON strings to dodge ROS param-type limits) ----------------
+        self.declare_parameter('vote_window',             3)
+        self.declare_parameter('pixel_tolerance',         20.0)
+        self.declare_parameter('min_tag_px',              25)
+        self.declare_parameter('tag_side_m',              0.15)
+        self.declare_parameter('focal_length_px',         337.0)   # 640/(2·tan(87°/2))
+        self.declare_parameter('tag_label_map_json',      '{}')
+        self.declare_parameter('action_by_label_json',    '{}')
 
-        self.vote_window: int   = int(self.get_parameter('vote_window').value)
-        self.px_tol: float      = float(self.get_parameter('pixel_tolerance').value)
-        self.dist_tol: float    = float(self.get_parameter('distance_tolerance_m').value)
-        self.approach_m: float  = float(self.get_parameter('approach_trigger_m').value)
+        self.vote_window     = int(self.get_parameter('vote_window').value)
+        self.px_tol          = float(self.get_parameter('pixel_tolerance').value)
+        self.min_tag_px      = int(self.get_parameter('min_tag_px').value)
+        self.tag_side_m      = float(self.get_parameter('tag_side_m').value)
+        self.focal_px        = float(self.get_parameter('focal_length_px').value)
 
-        raw_id_map    = self.get_parameter('tag_label_map').value or {}
-        raw_act_map   = self.get_parameter('action_by_label').value or {}
-        self.id_to_label: Dict[int, int] = {int(k): int(v) for k, v in dict(raw_id_map).items()}
-        self.label_to_act: Dict[int, str] = {int(k): str(v) for k, v in dict(raw_act_map).items()}
+        try:
+            raw_id_map = json.loads(self.get_parameter('tag_label_map_json').value or '{}')
+            raw_act_map = json.loads(self.get_parameter('action_by_label_json').value or '{}')
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(f'Failed to parse tag_label_map_json / action_by_label_json: {exc}')
+            raw_id_map, raw_act_map = {}, {}
+
+        self.id_to_label:  Dict[int, int] = {int(k): int(v) for k, v in raw_id_map.items()}
+        self.label_to_act: Dict[int, str] = {int(k): str(v) for k, v in raw_act_map.items()}
+
+        # ---------------- OpenCV ArUco detector ----------------
+        self._aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+        self._aruco_params = cv2.aruco.DetectorParameters()
+        self._detector = cv2.aruco.ArucoDetector(self._aruco_dict, self._aruco_params)
 
         # ---------------- state ----------------
         self._buffers: Dict[int, Deque[DetectionSample]] = {}
         self._committed_ids: set[int] = set()
         self._lock = threading.Lock()
         self._seq = 0
+        self._bridge = CvBridge()
 
         # ---------------- I/O ----------------
-        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
-        self.sub = self.create_subscription(
-            AprilTagDetectionArray, '/detections', self._on_detections, qos)
-        self.pub_event    = self.create_publisher(TagEvent, '/tag_event', qos)
-        self.pub_approach = self.create_publisher(Bool, '/approach_mode', qos)
-        self.pub_thought  = self.create_publisher(Thought, '/thought', qos)
+        qos_rel = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        qos_be  = QoSProfile(depth=5,  reliability=ReliabilityPolicy.BEST_EFFORT)
+
+        self.sub = self.create_subscription(Image, '/front_cam/image_raw', self._on_image, qos_be)
+        self.pub_event    = self.create_publisher(TagEvent, '/tag_event', qos_rel)
+        self.pub_approach = self.create_publisher(Bool, '/approach_mode', qos_rel)
+        self.pub_thought  = self.create_publisher(Thought, '/thought', qos_rel)
 
         self.get_logger().info(
             f'apriltag_handler up | id→label={self.id_to_label} | action_by_label={self.label_to_act}')
 
     # ========================================================================
-    def _on_detections(self, msg: AprilTagDetectionArray) -> None:
-        """Each incoming detection is pushed into its tag's rolling buffer.
-        When the last `vote_window` samples agree, emit a committed TagEvent.
-        """
-        if not msg.detections:
+    def _on_image(self, msg: Image) -> None:
+        try:
+            frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f'cv_bridge failure: {exc}')
+            return
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners_list, ids, _rejected = self._detector.detectMarkers(gray)
+
+        if ids is None or len(ids) == 0:
             self.pub_approach.publish(Bool(data=False))
             return
 
-        has_candidate = False
-        for det in msg.detections:
-            tag_id = int(det.id)
-            # apriltag_ros for Jazzy puts the homography-derived center in det.centre
-            cx = float(getattr(det, 'centre').x) if hasattr(det, 'centre') else 0.0
-            cy = float(getattr(det, 'centre').y) if hasattr(det, 'centre') else 0.0
+        any_candidate = False
+        for i, tag_id in enumerate(ids.flatten().tolist()):
+            tag_id = int(tag_id)
+            corners = corners_list[i].reshape(4, 2)
+            cx = float(corners[:, 0].mean())
+            cy = float(corners[:, 1].mean())
+            # average edge length in pixels
+            edges = [
+                float(np.linalg.norm(corners[(k + 1) % 4] - corners[k]))
+                for k in range(4)
+            ]
+            pixel_size = float(sum(edges) / 4.0)
+            if pixel_size < self.min_tag_px:
+                continue  # too small / too far; don't commit yet
 
-            # The pose of the tag in the camera frame comes via a companion
-            # topic /tf or /tag_poses; for this node we only need distance
-            # for the vote tolerance. If not provided, estimate from tag
-            # size (0.15 m) and homography; fall back to 0 to avoid crashes.
-            z = 0.0  # set by pose_array subscription when wired up
-            pose = Pose()
-
-            sample = DetectionSample(tag_id=tag_id, cx=cx, cy=cy, z=z, pose=pose)
+            sample = DetectionSample(tag_id=tag_id, cx=cx, cy=cy,
+                                     pixel_size=pixel_size, corners=corners)
             buf = self._buffers.setdefault(tag_id, deque(maxlen=self.vote_window))
             buf.append(sample)
+            any_candidate = True
 
-            has_candidate = True
             if len(buf) == self.vote_window and self._vote_agrees(buf):
                 if tag_id not in self._committed_ids:
                     self._committed_ids.add(tag_id)
-                    self._emit_commit(tag_id, sample, first_sighting=True)
+                    self._emit_commit(sample, first_sighting=True)
                 else:
-                    self._emit_commit(tag_id, sample, first_sighting=False)
+                    self._emit_commit(sample, first_sighting=False)
                 buf.clear()
 
-        self.pub_approach.publish(Bool(data=has_candidate))
+        self.pub_approach.publish(Bool(data=any_candidate))
 
     def _vote_agrees(self, buf: Deque[DetectionSample]) -> bool:
         first = buf[0]
@@ -119,26 +152,25 @@ class AprilTagHandler(Node):
                 return False
             if math.hypot(s.cx - first.cx, s.cy - first.cy) > self.px_tol:
                 return False
-            # distance check skipped when z is unknown (0); re-enable when pose
-            # comes in on a companion topic.
-            if first.z > 0 and abs(s.z - first.z) > self.dist_tol:
-                return False
         return True
 
-    def _emit_commit(self, tag_id: int, sample: DetectionSample, first_sighting: bool) -> None:
-        label = self.id_to_label.get(tag_id, 0)
+    def _emit_commit(self, sample: DetectionSample, first_sighting: bool) -> None:
+        label = self.id_to_label.get(sample.tag_id, 0)
         action = self.label_to_act.get(label, 'UNKNOWN')
+
+        # Distance estimate from pixel size (pinhole model).
+        distance = (self.tag_side_m * self.focal_px) / max(sample.pixel_size, 1.0)
 
         ev = TagEvent()
         ev.stamp = self.get_clock().now().to_msg()
-        ev.tag_id = tag_id
-        ev.logical_label = label
+        ev.tag_id = int(sample.tag_id)
+        ev.logical_label = int(label)
         ev.decision = action
-        ev.tag_in_camera = sample.pose
-        ev.distance = sample.z
-        ev.bearing = math.atan2(sample.cx - 320.0, 500.0)  # fallback; refined by pose fuser
+        ev.tag_in_camera = Pose()
+        ev.distance = float(distance)
+        ev.bearing = math.atan2(sample.cx - 320.0, self.focal_px)
         ev.vote_frames = self.vote_window
-        ev.first_sighting = first_sighting
+        ev.first_sighting = bool(first_sighting)
         self.pub_event.publish(ev)
 
         self._seq += 1
@@ -146,11 +178,18 @@ class AprilTagHandler(Node):
         t.stamp = ev.stamp
         t.seq = self._seq
         t.phase = 'APPROACH_TAG'
-        t.hypothesis = f'Tag id={tag_id} committed after {self.vote_window}-frame vote'
+        t.hypothesis = (f'Tag id={sample.tag_id} committed (label={label}, action={action}) '
+                        f'at ~{distance:.2f} m')
         t.action_chosen = f'publish_TagEvent(label={label},action={action})'
         t.rule_applied = 'apriltag_handler.vote_pass'
         t.alt_considered = 'reject_as_noise'
-        t.extras_json = f'{{"tag_id": {tag_id}, "label": {label}, "first": {str(first_sighting).lower()}}}'
+        t.extras_json = json.dumps({
+            'tag_id': sample.tag_id,
+            'label': label,
+            'first': first_sighting,
+            'pixel_size': sample.pixel_size,
+            'center_px': [sample.cx, sample.cy],
+        })
         t.confidence = 1.0 if label != 0 else 0.3
         self.pub_thought.publish(t)
 

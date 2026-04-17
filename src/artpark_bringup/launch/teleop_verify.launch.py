@@ -30,15 +30,13 @@ def generate_launch_description():
         )
     ])
 
-    apriltag = Node(
-        package='apriltag_ros',
-        executable='apriltag_node',
-        parameters=[PathJoinSubstitution([bringup, 'config', 'apriltag.yaml'])],
-        remappings=[
-            ('/image_rect', '/front_cam/image_raw'),
-            ('/camera_info', '/front_cam/camera_info'),
-            ('/detections', '/detections'),
-        ],
+    # Run the in-process handler so you can watch /tag_event for id→position
+    # mapping during the teleop drive.
+    handler = Node(
+        package='artpark_perception',
+        executable='apriltag_handler',
+        name='apriltag_handler',
+        parameters=[PathJoinSubstitution([bringup, 'config', 'tag_label_map.yaml'])],
         output='screen',
     )
 
@@ -50,5 +48,5 @@ def generate_launch_description():
         DeclareLaunchArgument('spawn_y', default_value='1.80'),
         DeclareLaunchArgument('spawn_yaw', default_value='0.0'),
         sim, robot_spawn,
-        TimerAction(period=7.0, actions=[apriltag]),
+        TimerAction(period=7.0, actions=[handler]),
     ])

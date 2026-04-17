@@ -23,7 +23,6 @@ def generate_launch_description():
     tag_yaml = PathJoinSubstitution([bringup, 'config', 'tag_label_map.yaml'])
     hsv_yaml = PathJoinSubstitution([bringup, 'config', 'hsv_thresholds.yaml'])
     nav_yaml = PathJoinSubstitution([bringup, 'config', 'navigation.yaml'])
-    apriltag_yaml = PathJoinSubstitution([bringup, 'config', 'apriltag.yaml'])
 
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([bringup, 'launch', 'sim.launch.py']))
@@ -42,18 +41,8 @@ def generate_launch_description():
         )],
     )
 
-    apriltag = Node(
-        package='apriltag_ros',
-        executable='apriltag_node',
-        name='apriltag_node',
-        parameters=[apriltag_yaml],
-        remappings=[
-            ('/image_rect', '/front_cam/image_raw'),
-            ('/camera_info', '/front_cam/camera_info'),
-            ('/detections', '/detections'),
-        ],
-        output='screen',
-    )
+    # apriltag detection now runs in-process inside apriltag_handler (OpenCV
+    # ArUco with DICT_APRILTAG_36h11) — no separate apriltag_ros node.
 
     handler = Node(
         package='artpark_perception',
@@ -102,7 +91,7 @@ def generate_launch_description():
     )
 
     # Perception + decision come up AFTER the robot (hence another delay).
-    downstream = TimerAction(period=7.0, actions=[apriltag, handler, floor, obs, tile, sm, logger])
+    downstream = TimerAction(period=7.0, actions=[handler, floor, obs, tile, sm, logger])
 
     return LaunchDescription([
         DeclareLaunchArgument('spawn_x',   default_value='-1.35'),
