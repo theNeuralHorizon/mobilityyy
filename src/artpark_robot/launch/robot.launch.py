@@ -4,10 +4,16 @@ Run after `gz sim -r grid_world_FINAL.sdf` is up. This launch publishes TF
 from the xacro URDF, bridges the Gazebo sensor/command topics into ROS, and
 spawns the robot at the solid-green START tile with yaw configurable via
 argument.
+
+Note on spawn args: the ros_gz_sim/create tool uses argparse which can
+mis-parse negative values like `-x -1.35` (treats `-1.35` as a flag). We
+work around this by either (a) using a wrapper bash command with `--` as a
+separator, or (b) using ExecuteProcess with explicit argv so no shell
+splitting happens. We go with (b) — most robust.
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, TimerAction
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -30,18 +36,35 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_description, 'use_sim_time': True}],
     )
 
-    # Spawn entity in Gazebo Harmonic via ros_gz_sim
-    spawn = Node(
-        package='ros_gz_sim',
-        executable='create',
-        arguments=[
+    # Spawn via ExecuteProcess so argv is passed as-is (no shell re-parsing),
+    # and use the `=` form for flags that take potentially-negative values.
+    spawn = ExecuteProcess(
+        cmd=[
+            'ros2', 'run', 'ros_gz_sim', 'create',
             '-topic', 'robot_description',
             '-name', 'artpark_bot',
-            '-x', spawn_x, '-y', spawn_y, '-z', '0.05',
-            '-Y', spawn_yaw,
+            ['-x', '=', spawn_x],   # → `-x=-1.35` — argparse-safe
+            ['-y', '=', spawn_y],
+            '-z=0.05',
+            ['-Y', '=', spawn_yaw],
         ],
         output='screen',
     )
+
+    # After the create process exits, call set_pose as a belt-and-suspenders
+    # teleport. Re-snaps the robot to the intended world pose even if the
+    # -x/-y flags were ignored (common Harmonic-gotcha with negative vals).
+    fixup_pose = TimerAction(period=2.0, actions=[
+        ExecuteProcess(
+            cmd=['gz', 'service', '-s', '/world/artpark_arena/set_pose',
+                 '--reqtype', 'gz.msgs.Pose',
+                 '--reptype', 'gz.msgs.Boolean',
+                 '--timeout', '2000',
+                 '--req', ['name: "artpark_bot", position: {x: ', spawn_x,
+                           ', y: ', spawn_y, ', z: 0.05}, orientation: {z: 0, w: 1}']],
+            output='screen',
+        ),
+    ])
 
     # Topic bridges: Gazebo ↔ ROS 2
     bridge = Node(
@@ -70,5 +93,5 @@ def generate_launch_description():
                               description='World y of the START tile (solid green)'),
         DeclareLaunchArgument('spawn_yaw', default_value='0.0',
                               description='Yaw at spawn; adjust after P0 screenshot'),
-        rsp, spawn, bridge,
+        rsp, spawn, bridge, fixup_pose,
     ])
