@@ -1,0 +1,6 @@
+vision_processor:
+  ros__parameters:
+    green_low: [35, 80, 60]
+    green_high: [90, 255, 255]
+    orange_low: [5, 120, 120]
+    orange_high: [25, 255, 255]
