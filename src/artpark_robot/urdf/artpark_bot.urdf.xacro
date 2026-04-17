@@ -169,16 +169,53 @@
   </joint>
 
   <!-- ================= GAZEBO / IGNITION TAGS ================= -->
-  <!-- Friction only; DON'T override material (URDF visuals already set colour
-       and Gazebo/Grey is deprecated — its warning broke rendering for us). -->
+  <!-- Explicit inline materials per link (ambient + diffuse). This is the
+       SDF-native form that Gazebo Harmonic renders reliably; URDF-only
+       <material name=...> blocks are not always picked up by sdformat.
+       Chose deliberately loud colours to make the robot obvious. -->
+  <gazebo reference="base_link">
+    <visual>
+      <material>
+        <ambient>1.0 0.1 0.1 1.0</ambient>
+        <diffuse>1.0 0.1 0.1 1.0</diffuse>
+        <specular>0.2 0.2 0.2 1.0</specular>
+      </material>
+    </visual>
+  </gazebo>
   <gazebo reference="wheel_left">
     <mu1>1.0</mu1><mu2>1.0</mu2>
+    <visual><material>
+      <ambient>0.05 0.05 0.05 1.0</ambient>
+      <diffuse>0.05 0.05 0.05 1.0</diffuse>
+    </material></visual>
   </gazebo>
   <gazebo reference="wheel_right">
     <mu1>1.0</mu1><mu2>1.0</mu2>
+    <visual><material>
+      <ambient>0.05 0.05 0.05 1.0</ambient>
+      <diffuse>0.05 0.05 0.05 1.0</diffuse>
+    </material></visual>
   </gazebo>
   <gazebo reference="caster">
     <mu1>0.0</mu1><mu2>0.0</mu2>
+  </gazebo>
+  <gazebo reference="front_cam">
+    <visual><material>
+      <ambient>0.1 0.3 0.9 1.0</ambient>
+      <diffuse>0.1 0.3 0.9 1.0</diffuse>
+    </material></visual>
+  </gazebo>
+  <gazebo reference="floor_cam">
+    <visual><material>
+      <ambient>0.1 0.3 0.9 1.0</ambient>
+      <diffuse>0.1 0.3 0.9 1.0</diffuse>
+    </material></visual>
+  </gazebo>
+  <gazebo reference="lidar_link">
+    <visual><material>
+      <ambient>1.0 0.8 0.0 1.0</ambient>
+      <diffuse>1.0 0.8 0.0 1.0</diffuse>
+    </material></visual>
   </gazebo>
 
   <!-- Differential drive plugin.

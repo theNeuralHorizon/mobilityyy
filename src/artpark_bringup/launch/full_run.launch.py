@@ -83,7 +83,9 @@ def generate_launch_description():
         package='artpark_decision',
         executable='state_machine',
         name='state_machine',
-        parameters=[nav_yaml],
+        parameters=[nav_yaml, {
+            'debug_hold': LaunchConfiguration('debug_hold'),
+        }],
         output='screen',
     )
 
@@ -101,5 +103,7 @@ def generate_launch_description():
         DeclareLaunchArgument('spawn_x',   default_value='-1.35'),
         DeclareLaunchArgument('spawn_y',   default_value='1.80'),
         DeclareLaunchArgument('spawn_yaw', default_value='0.0'),
+        DeclareLaunchArgument('debug_hold', default_value='false',
+                              description='If true, the state machine stays in INIT and publishes no motion.'),
         sim, robot_spawn, downstream,
     ])

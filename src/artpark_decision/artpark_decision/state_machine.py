@@ -62,6 +62,8 @@ class SMState:
     committed_action: Optional[str] = None
     rotation_target_yaw: Optional[float] = None
     current_yaw: float = 0.0
+    odom_x: float = 0.0
+    odom_y: float = 0.0
 
 
 class StateMachine(Node):
@@ -74,12 +76,17 @@ class StateMachine(Node):
         self.declare_parameter('v_follow',   0.15)
         self.declare_parameter('w_turn',     0.8)
         self.declare_parameter('idle_watchdog_s', 4.0)
+        # Debug-hold: when True, the state machine stays in INIT forever and
+        # never publishes a non-zero cmd_vel. Useful for inspecting spawn pose
+        # without the robot wandering off.
+        self.declare_parameter('debug_hold', False)
 
         self.v_exp   = float(self.get_parameter('v_explore').value)
         self.v_app   = float(self.get_parameter('v_approach').value)
         self.v_fol   = float(self.get_parameter('v_follow').value)
         self.w_turn  = float(self.get_parameter('w_turn').value)
         self.idle_s  = float(self.get_parameter('idle_watchdog_s').value)
+        self.debug_hold = bool(self.get_parameter('debug_hold').value)
 
         # -------- state --------
         self.s = SMState()
@@ -172,15 +179,20 @@ class StateMachine(Node):
             2.0 * (q.w * q.z + q.x * q.y),
             1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         )
+        self.s.odom_x = msg.pose.pose.position.x
+        self.s.odom_y = msg.pose.pose.position.y
 
     # ================================================================
     def _heartbeat(self) -> None:
-        """2 Hz human-visible status — phase + tile + tag-log count."""
+        """2 Hz human-visible status — phase + pose + tile + tag-log count."""
         self.get_logger().info(
-            f'PHASE={self.s.phase.name} | tile={self.s.tile_rc} | '
+            f'PHASE={self.s.phase.name} | '
+            f'odom=({self.s.odom_x:.2f},{self.s.odom_y:.2f}) | '
+            f'tile={self.s.tile_rc} | '
             f'entry_edge={self.s.entry_edge} | tags_logged={sorted(self.s.tags_logged)} | '
             f'yaw={math.degrees(self.s.current_yaw):.0f}° | '
-            f'obs_near={self.s.obstacle_near} | approach={self.s.approach_mode}')
+            f'obs_near={self.s.obstacle_near} | approach={self.s.approach_mode} | '
+            f'hold={self.debug_hold}')
 
     def _tick(self) -> None:
         ph = self.s.phase
@@ -191,6 +203,10 @@ class StateMachine(Node):
 
         if ph == Phase.INIT:
             # Wait 1 second for TF/odom/sensors to settle, then explore.
+            # debug_hold freezes here forever so operators can inspect spawn.
+            if self.debug_hold:
+                self._publish(cmd)
+                return
             if time.monotonic() - self._last_cmd_time > 1.0:
                 self.s.phase = Phase.EXPLORE
                 self._think('INIT → EXPLORE (settle complete)',
