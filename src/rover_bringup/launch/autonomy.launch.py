@@ -15,8 +15,8 @@ def generate_launch_description():
             name="apriltag_node",
             parameters=[os.path.join(bringup_share, "config", "apriltag.yaml")],
             remappings=[
-                ("/image_rect", "/camera/image_raw"),
-                ("/camera_info", "/camera/camera_info"),
+                ("/image_rect", "/r1_mini/camera/image_raw"),
+                ("/camera_info", "/r1_mini/camera/camera_info"),
                 ("/detections", "/tag_detections_native"),
             ],
             output="screen",
@@ -29,6 +29,10 @@ def generate_launch_description():
                 os.path.join(bringup_share, "config", "hsv_thresholds.yaml"),
                 os.path.join(bringup_share, "config", "tag_map.yaml"),
             ],
+            remappings=[
+                ("/camera/image_raw", "/r1_mini/camera/image_raw"),
+                ("/camera/camera_info", "/r1_mini/camera/camera_info"),
+            ],
             output="screen",
         ),
         Node(
@@ -36,6 +40,10 @@ def generate_launch_description():
             executable="state_machine_controller",
             name="state_machine_controller",
             parameters=[os.path.join(bringup_share, "config", "navigation.yaml")],
+            remappings=[
+                ("/scan", "/r1_mini/lidar"),
+                ("/imu", "/r1_mini/imu"),
+            ],
             output="screen",
         ),
         Node(
@@ -43,12 +51,18 @@ def generate_launch_description():
             executable="safety_controller",
             name="safety_controller",
             parameters=[os.path.join(bringup_share, "config", "navigation.yaml")],
+            remappings=[
+                ("/scan", "/r1_mini/lidar"),
+            ],
             output="screen",
         ),
         Node(
             package="rover_logging",
             executable="run_logger",
             name="run_logger",
+            remappings=[
+                ("/camera/image_raw", "/r1_mini/camera/image_raw"),
+            ],
             output="screen",
         ),
     ])

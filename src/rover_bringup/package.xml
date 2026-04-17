@@ -12,7 +12,8 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rover_autonomy</exec_depend>
   <exec_depend>rover_logging</exec_depend>
-  <exec_depend>rover_robot</exec_depend>
+  <exec_depend>mini_r1_v1_description</exec_depend>
+  <exec_depend>mini_r1_v1_gz</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
