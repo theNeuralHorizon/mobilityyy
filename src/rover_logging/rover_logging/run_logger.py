@@ -58,7 +58,10 @@ class RunLogger(Node):
             writer.writerow(["Timestamp", "Tag_ID", "Decision_Taken", "Image_File"])
 
         self.create_subscription(Image, camera_image_topic, self._on_image, 10)
+        self.create_subscription(String, "/vision/tag_event", self._on_tag_event, 10)
+        self.create_subscription(String, "/vision/path_tracking", self._on_path_tracking, 10)
         self.create_subscription(String, "/vision/tile_event", self._on_tile_event, 10)
+        self.create_subscription(String, "/mission/state", self._on_mission_state, 10)
         self.create_subscription(String, "/mission/log_event", self._on_log_event, 10)
 
     def _on_image(self, msg: Image) -> None:
@@ -74,10 +77,29 @@ class RunLogger(Node):
             cv2.imwrite(str(self.images_dir / image_name), self.latest_image)
         return image_name
 
+    def _append_jsonl(self, filename: str, payload: dict) -> None:
+        with (self.output_dir / filename).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload) + os.linesep)
+
+    def _on_tag_event(self, msg: String) -> None:
+        payload = json.loads(msg.data)
+        self._append_jsonl("tag_events.jsonl", payload)
+
+    def _on_path_tracking(self, msg: String) -> None:
+        payload = json.loads(msg.data)
+        payload["logged_at_ns"] = int(self.get_clock().now().nanoseconds)
+        self._append_jsonl("path_tracking.jsonl", payload)
+
     def _on_tile_event(self, msg: String) -> None:
         payload = json.loads(msg.data)
-        with (self.output_dir / "tile_counts.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload) + os.linesep)
+        self._append_jsonl("tile_counts.jsonl", payload)
+
+    def _on_mission_state(self, msg: String) -> None:
+        payload = {
+            "logged_at_ns": int(self.get_clock().now().nanoseconds),
+            "state": msg.data,
+        }
+        self._append_jsonl("mission_state.jsonl", payload)
 
     def _on_log_event(self, msg: String) -> None:
         payload = json.loads(msg.data)
@@ -90,8 +112,7 @@ class RunLogger(Node):
                 decision=str(payload["decision_taken"]),
                 image_name=image_name,
             ))
-        with (self.output_dir / "mission_events.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload) + os.linesep)
+        self._append_jsonl("mission_events.jsonl", payload)
 
 
 def main(args=None) -> None:  # pragma: no cover

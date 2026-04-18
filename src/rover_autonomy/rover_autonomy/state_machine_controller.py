@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 try:
@@ -72,6 +72,8 @@ class ControlState:
     scan_until: float = 0.0
     scan_angular_z: float = 0.0
     last_scan_monotonic: float = 0.0
+    maneuver_queue: list[tuple[float, float, float]] = field(default_factory=list)
+    color_scan_direction: float = 1.0
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -80,7 +82,8 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 def compute_follow_command(target_detected: bool, yaw_error: float, linear_speed: float) -> tuple[float, float]:
     if not target_detected:
-        return 0.0, 0.35
+        remembered_bias = -0.5 * yaw_error if abs(yaw_error) > 1e-3 else 0.18
+        return max(0.06, linear_speed * 0.55), _clamp(remembered_bias, -0.45, 0.45)
     return linear_speed, _clamp(-0.9 * yaw_error, -1.0, 1.0)
 
 
@@ -140,12 +143,11 @@ def should_start_scan(
 ) -> bool:
     if phase not in (
         MissionPhase.STATE_START,
-        MissionPhase.STATE_TAG2_FOUND,
-        MissionPhase.STATE_TAG1_DEAD_END,
         MissionPhase.STATE_RETURN_TAG2,
     ):
         return False
-    if seconds_since_last_scan < 4.0 or seconds_since_last_tag < 2.5:
+    min_scan_gap = 4.0 if phase is MissionPhase.STATE_RETURN_TAG2 else 6.0
+    if seconds_since_last_scan < min_scan_gap or seconds_since_last_tag < 3.5:
         return False
     front = float(regions.get("front", 10.0))
     right = float(regions.get("right", 10.0))
@@ -164,8 +166,8 @@ def should_start_color_scan(
 ) -> bool:
     return (
         phase is MissionPhase.STATE_TAG4_UTURN
-        and seconds_since_last_tag > 10.0
-        and seconds_since_last_scan > 8.0
+        and seconds_since_last_tag > 6.0
+        and seconds_since_last_scan > 5.0
     )
 
 
@@ -192,16 +194,18 @@ def decision_for_tag_event(phase: MissionPhase, mission_label: int, hint_consume
     return "NO_ACTION"
 
 
-def phase_entry_maneuver(phase: MissionPhase) -> tuple[float, float, float]:
+def phase_entry_maneuver_steps(phase: MissionPhase) -> list[tuple[float, float, float]]:
     if phase is MissionPhase.STATE_TAG2_FOUND:
-        return 1.7, 0.0, -0.65
+        return [(1.5, 0.0, -0.65), (1.2, 0.14, 0.0)]
+    if phase is MissionPhase.STATE_RETURN_TAG2:
+        return [(1.2, 0.10, 0.20)]
     if phase is MissionPhase.STATE_TAG3_GREEN_PATH:
-        return 2.8, 0.0, 0.85
+        return [(2.6, 0.0, 0.85), (1.5, 0.13, 0.0)]
     if phase is MissionPhase.STATE_TAG1_DEAD_END:
-        return 2.8, 0.0, 0.85
+        return [(2.5, 0.0, 0.85), (1.0, 0.12, 0.0)]
     if phase is MissionPhase.STATE_TAG4_UTURN:
-        return 2.8, 0.0, 0.85
-    return 0.0, 0.0, 0.0
+        return [(2.5, 0.0, 0.85), (2.0, 0.15, 0.0)]
+    return []
 
 
 def should_handle_tag_event(
@@ -323,11 +327,18 @@ class StateMachineController(Node):
         self.color_pub.publish(String(data=self.state.target_color))
 
     def _start_phase_maneuver(self, phase: MissionPhase) -> None:
-        duration_s, linear_x, angular_z = phase_entry_maneuver(phase)
-        if duration_s <= 0.0:
+        self.state.maneuver_queue = list(phase_entry_maneuver_steps(phase))
+        self._advance_maneuver()
+
+    def _advance_maneuver(self) -> None:
+        if not self.state.maneuver_queue:
             self.state.maneuver_until = 0.0
             self.state.maneuver_linear_x = 0.0
             self.state.maneuver_angular_z = 0.0
+            return
+        duration_s, linear_x, angular_z = self.state.maneuver_queue.pop(0)
+        if duration_s <= 0.0:
+            self._advance_maneuver()
             return
         self.state.maneuver_until = time.monotonic() + duration_s
         self.state.maneuver_linear_x = linear_x
@@ -338,6 +349,8 @@ class StateMachineController(Node):
         if not self.state.latest_clearance_ok:
             self.cmd_pub.publish(cmd)
             return
+        if self.state.maneuver_until > 0.0 and time.monotonic() >= self.state.maneuver_until:
+            self._advance_maneuver()
         if time.monotonic() < self.state.maneuver_until:
             cmd.linear.x = self.state.maneuver_linear_x
             cmd.angular.z = self.state.maneuver_angular_z
@@ -429,8 +442,9 @@ class StateMachineController(Node):
                 seconds_since_last_scan=seconds_since_last_scan,
             ):
                 self.state.last_scan_monotonic = time.monotonic()
-                self.state.scan_until = self.state.last_scan_monotonic + 1.2
-                self.state.scan_angular_z = 0.5
+                self.state.scan_until = self.state.last_scan_monotonic + 0.9
+                self.state.color_scan_direction *= -1.0
+                self.state.scan_angular_z = 0.42 * self.state.color_scan_direction
                 cmd.angular.z = self.state.scan_angular_z
                 self.cmd_pub.publish(cmd)
                 return
@@ -440,6 +454,13 @@ class StateMachineController(Node):
                 self.state.last_yaw_error,
                 self.follow_linear_speed,
             )
+            if not detected and bool(self.last_path_tracking.get("tag_candidate_detected", False)):
+                linear_x = 0.08
+                angular_z = _clamp(
+                    -0.9 * float(self.last_path_tracking.get("tag_candidate_yaw_error", 0.0)),
+                    -0.45,
+                    0.45,
+                )
             cmd.linear.x = linear_x
             cmd.angular.z = angular_z
         self.cmd_pub.publish(cmd)
