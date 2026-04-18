@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${ROOT_DIR}/output"
 
+export AMENT_TRACE_SETUP_FILES="${AMENT_TRACE_SETUP_FILES-}"
 source /opt/ros/jazzy/setup.bash
+set -u
 
 cd "${ROOT_DIR}"
 export PYTHONNOUSERSITE=1
