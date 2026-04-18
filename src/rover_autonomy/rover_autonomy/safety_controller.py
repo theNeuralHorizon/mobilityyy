@@ -7,27 +7,38 @@ try:
     from geometry_msgs.msg import Twist
     from rclpy.node import Node
     from sensor_msgs.msg import LaserScan
-    from std_msgs.msg import Bool
+    from std_msgs.msg import Bool, String
 except ImportError:  # pragma: no cover
     rclpy = None
     Node = object
     Twist = None
     LaserScan = None
     Bool = None
+    String = None
 
 
 def apply_safety_override(
     requested_linear_x: float,
     requested_angular_z: float,
     front_min_m: float,
+    front_left_min_m: float,
+    front_right_min_m: float,
     left_min_m: float,
     right_min_m: float,
     hard_stop_distance_m: float,
-) -> tuple[float, float, bool]:
+) -> tuple[float, float, bool, str]:
+    if 0.0 < min(front_min_m, front_left_min_m, front_right_min_m) < 0.11:
+        turn_sign = 1.0 if left_min_m >= right_min_m else -1.0
+        return -0.10, 0.75 * turn_sign, True, "reverse_escape"
     if 0.0 < front_min_m < hard_stop_distance_m:
         turn_sign = 1.0 if left_min_m >= right_min_m else -1.0
-        return 0.0, 0.6 * turn_sign, True
-    return requested_linear_x, requested_angular_z, False
+        return 0.0, 0.6 * turn_sign, True, "hard_stop"
+    if requested_linear_x > 0.0:
+        if 0.0 < front_left_min_m < 0.16:
+            return min(requested_linear_x, 0.05), -0.45, True, "thin_wall_left"
+        if 0.0 < front_right_min_m < 0.16:
+            return min(requested_linear_x, 0.05), 0.45, True, "thin_wall_right"
+    return requested_linear_x, requested_angular_z, False, "clear"
 
 
 def _sector_min(ranges: list[float], start: int, end: int) -> float:
@@ -62,6 +73,7 @@ class SafetyController(Node):
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.clearance_pub = self.create_publisher(Bool, "/safety/clearance", 10)
         self.override_pub = self.create_publisher(Bool, "/safety/override_active", 10)
+        self.debug_pub = self.create_publisher(String, "/safety/debug", 10)
 
         self.create_subscription(Twist, "/nav/cmd_vel_raw", self._on_cmd, 10)
         self.create_subscription(LaserScan, scan_topic, self._on_scan, 10)
@@ -86,12 +98,16 @@ class SafetyController(Node):
         quarter = count // 4
         half_width = max(count // 18, 1)
         front = _window_min(self.latest_scan, center, half_width)
+        front_left = _window_min(self.latest_scan, (center + max(count // 10, 1)) % count, half_width)
+        front_right = _window_min(self.latest_scan, (center - max(count // 10, 1)) % count, half_width)
         left = _window_min(self.latest_scan, (center + quarter) % count, half_width)
         right = _window_min(self.latest_scan, (center - quarter) % count, half_width)
-        linear_x, angular_z, active = apply_safety_override(
+        linear_x, angular_z, active, reason = apply_safety_override(
             self.requested_linear_x,
             self.requested_angular_z,
             front,
+            front_left,
+            front_right,
             left,
             right,
             self.hard_stop_distance_m,
@@ -101,6 +117,12 @@ class SafetyController(Node):
         self.cmd_pub.publish(cmd)
         self.clearance_pub.publish(Bool(data=not active))
         self.override_pub.publish(Bool(data=active))
+        self.debug_pub.publish(String(data=(
+            f'{{"front": {front:.3f}, "front_left": {front_left:.3f}, "front_right": {front_right:.3f}, '
+            f'"left": {left:.3f}, "right": {right:.3f}, "requested_linear_x": {self.requested_linear_x:.3f}, '
+            f'"requested_angular_z": {self.requested_angular_z:.3f}, "applied_linear_x": {linear_x:.3f}, '
+            f'"applied_angular_z": {angular_z:.3f}, "active": {str(active).lower()}, "reason": "{reason}"}}'
+        )))
 
 
 def main(args=None) -> None:  # pragma: no cover
@@ -112,4 +134,5 @@ def main(args=None) -> None:  # pragma: no cover
         rclpy.spin(node)
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

@@ -1,7 +1,9 @@
 vision_processor:
   ros__parameters:
-    # Live verification so far:
-    #   tag id 0 is the first reachable mission tag from spawn -> logical Tag 2
-    #   tag id 2 is the next reachable tag after the Tag 2 turn maneuver -> logical Tag 1
-    # Remaining ids are still provisional and should be refined with follow-up runs.
-    tag_id_to_label: [2, 5, 1, 4, 3]
+    # SDF alignment:
+    #   physical tag0 -> logical Tag 2
+    #   physical tag1 -> logical Tag 1
+    #   physical tag2 -> logical Tag 3
+    #   physical tag3 -> logical Tag 4
+    #   physical tag4 -> logical Tag 5
+    tag_id_to_label: [2, 1, 3, 4, 5]

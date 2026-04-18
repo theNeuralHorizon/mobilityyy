@@ -5,11 +5,11 @@ from typing import Dict
 
 
 DECISION_BY_LABEL = {
-    1: "U_TURN_TO_TAG2",
-    2: "TURN_TO_TAG1",
-    3: "TRACK_GREEN",
-    4: "U_TURN_TO_TAG5",
-    5: "TRACK_ORANGE",
+    1: "TURN_LEFT_BACKTRACK",
+    2: "TURN_RIGHT_TO_TAG1",
+    3: "START_GREEN",
+    4: "U_TURN",
+    5: "START_ORANGE",
 }
 
 
