@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${ROOT_DIR}/output"
 
 export AMENT_TRACE_SETUP_FILES="${AMENT_TRACE_SETUP_FILES-}"
+export COLCON_TRACE="${COLCON_TRACE-}"
 source /opt/ros/jazzy/setup.bash
 set -u
 
@@ -23,7 +24,11 @@ colcon build --symlink-install --packages-up-to \
   rover_logging \
   rover_bringup
 
+set +u
+export COLCON_TRACE="${COLCON_TRACE-}"
+export AMENT_TRACE_SETUP_FILES="${AMENT_TRACE_SETUP_FILES-}"
 source install/setup.bash
+set -u
 
 ros2 launch rover_bringup full_stack.launch.py \
   headless:=false \
