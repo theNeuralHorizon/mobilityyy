@@ -329,7 +329,7 @@ class VisionProcessor(Node):
         if self.debug_pub.get_subscription_count() > 0:
             debug_frame = frame.copy()
             cv2.line(debug_frame, (debug_frame.shape[1] // 2, 0), (debug_frame.shape[1] // 2, debug_frame.shape[0]), (255, 255, 255), 2)
-            if detected:
+            if detected and contour is not None:
                 shifted = contour.copy()
                 shifted[:, 0, 1] += row_offset
                 cv2.drawContours(debug_frame, [shifted], -1, (0, 255, 0), 2)
