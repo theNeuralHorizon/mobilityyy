@@ -116,9 +116,9 @@ def wall_follow_command(regions: dict[str, float], follow_side: str = "right") -
     left = float(regions.get("left", 10.0))
     fleft = float(regions.get("fleft", 10.0))
 
-    if front < 0.22:
+    if front < 0.35:
         return 0.0, 0.65 if follow_side == "right" else -0.65
-    if front < 0.40:
+    if front < 0.55:
         return 0.08, 0.45 if follow_side == "right" else -0.45
 
     target_wall = right if follow_side == "right" else left
@@ -153,7 +153,7 @@ def should_start_scan(
     left = float(regions.get("left", 10.0))
     fleft = float(regions.get("fleft", 10.0))
     side_opening = max(right, fright, left, fleft) > 1.0
-    approaching_corner = front < 0.45
+    approaching_corner = front < 0.55
     return side_opening or approaching_corner
 
 

@@ -51,7 +51,7 @@ class SafetyController(Node):
         if rclpy is None:  # pragma: no cover
             raise RuntimeError("rclpy is required to run the safety node")
         super().__init__("safety_controller")
-        self.declare_parameter("hard_stop_distance_m", 0.2)
+        self.declare_parameter("hard_stop_distance_m", 0.35)
         self.declare_parameter("scan_topic", "/r1_mini/lidar")
         self.hard_stop_distance_m = float(self.get_parameter("hard_stop_distance_m").value)
         scan_topic = str(self.get_parameter("scan_topic").value)
@@ -84,7 +84,7 @@ class SafetyController(Node):
         count = len(self.latest_scan)
         center = count // 2
         quarter = count // 4
-        half_width = max(count // 18, 1)
+        half_width = max(count // 8, 1)
         front = _window_min(self.latest_scan, center, half_width)
         left = _window_min(self.latest_scan, (center + quarter) % count, half_width)
         right = _window_min(self.latest_scan, (center - quarter) % count, half_width)
