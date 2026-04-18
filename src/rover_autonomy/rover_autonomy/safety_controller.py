@@ -51,7 +51,7 @@ class SafetyController(Node):
         if rclpy is None:  # pragma: no cover
             raise RuntimeError("rclpy is required to run the safety node")
         super().__init__("safety_controller")
-        self.declare_parameter("hard_stop_distance_m", 0.35)
+        self.declare_parameter("hard_stop_distance_m", 0.25)
         self.declare_parameter("scan_topic", "/r1_mini/lidar")
         self.hard_stop_distance_m = float(self.get_parameter("hard_stop_distance_m").value)
         scan_topic = str(self.get_parameter("scan_topic").value)
