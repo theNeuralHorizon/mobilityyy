@@ -79,6 +79,8 @@ class ControlState:
     last_progress_monotonic: float = 0.0
     last_progress_x: float = 0.0
     last_progress_y: float = 0.0
+    current_odom_x: float = 0.0
+    current_odom_y: float = 0.0
     odom_initialized: bool = False
     recovery_active: bool = False
     phase_started_monotonic: float = 0.0
@@ -206,38 +208,45 @@ def should_trigger_stuck_recovery(
     state: ControlState,
     seconds_since_progress: float,
     currently_recovering: bool,
+    timeout_s: float,
 ) -> bool:
     return (
         not currently_recovering
         and state.phase is not MissionPhase.STATE_STOP
-        and seconds_since_progress >= 15.0
+        and seconds_since_progress >= timeout_s
     )
+
+
+def net_progress_distance(anchor_x: float, anchor_y: float, current_x: float, current_y: float) -> float:
+    return math.hypot(float(current_x) - float(anchor_x), float(current_y) - float(anchor_y))
 
 
 def stuck_recovery_steps(phase: MissionPhase) -> list[tuple[float, float, float]]:
     if phase is MissionPhase.STATE_RETURN_TAG2:
-        return [(2.0, -0.12, 0.0), (1.5, 0.0, 0.60), (1.6, 0.12, 0.10)]
+        return [(1.2, -0.12, 0.0), (1.0, 0.0, 0.60), (1.3, 0.11, 0.08)]
     if phase in (
         MissionPhase.STATE_TAG3_GREEN_PATH,
         MissionPhase.STATE_TAG4_UTURN,
         MissionPhase.STATE_TAG5_ORANGE_PATH,
         MissionPhase.STATE_FINAL_GOAL,
     ):
-        return [(2.2, -0.12, 0.0), (1.4, 0.0, -0.55), (1.2, 0.11, 0.0)]
-    return [(2.2, -0.12, 0.0), (1.2, 0.0, -0.55), (1.2, 0.12, 0.0)]
+        return [(1.1, -0.12, 0.0), (1.0, 0.0, -0.55), (1.1, 0.10, 0.0)]
+    return [(1.1, -0.12, 0.0), (0.9, 0.0, -0.55), (1.0, 0.11, 0.0)]
 
 
 def route_turn_steps(phase: MissionPhase, step: int) -> list[tuple[float, float, float]]:
     if phase is MissionPhase.STATE_TAG2_FOUND and step == 0:
         return [(1.15, 0.0, 0.84), (1.55, 0.12, 0.02)]
     if phase is MissionPhase.STATE_TAG3_GREEN_PATH and step == 0:
-        return [(1.2, 0.0, -0.72), (1.5, 0.12, 0.0)]
+        return [(0.95, 0.0, -0.62), (1.65, 0.12, -0.03)]
     if phase is MissionPhase.STATE_TAG3_GREEN_PATH and step == 1:
-        return [(1.1, 0.0, 0.70), (1.3, 0.12, 0.0)]
+        return [(0.75, 0.0, 0.46), (1.55, 0.11, -0.04)]
     if phase is MissionPhase.STATE_TAG4_UTURN and step == 0:
-        return [(1.2, 0.0, -0.72), (1.4, 0.12, 0.0)]
+        return [(0.95, 0.0, -0.62), (1.55, 0.11, -0.03)]
     if phase in (MissionPhase.STATE_TAG5_ORANGE_PATH, MissionPhase.STATE_FINAL_GOAL) and step == 0:
-        return [(1.1, 0.0, 0.72), (1.4, 0.12, 0.0)]
+        return [(1.1, 0.0, 0.70), (2.35, 0.12, 0.02)]
+    if phase is MissionPhase.STATE_FINAL_GOAL and step == 1:
+        return [(5.0, 0.16, 0.0)]
     return []
 
 
@@ -298,6 +307,21 @@ def should_defer_phase_seen_tracking(state: ControlState, mission_label: int) ->
     )
 
 
+def should_force_tag1_timed_assist(phase: MissionPhase, route_turn_step: int, phase_elapsed: float) -> bool:
+    return phase is MissionPhase.STATE_TAG2_FOUND and route_turn_step > 0 and phase_elapsed > 8.0
+
+
+def should_force_return_tag2_timed_assist(phase: MissionPhase, phase_elapsed: float) -> bool:
+    return phase is MissionPhase.STATE_TAG1_DEAD_END and phase_elapsed > 7.0
+
+
+def final_goal_commit_command(front: float, left: float, right: float) -> tuple[float, float, bool]:
+    if 0.0 < front < 0.22:
+        return 0.0, 0.0, True
+    center_bias = _clamp(0.35 * (left - right), -0.12, 0.12)
+    return 0.16, center_bias, False
+
+
 class StateMachineController(Node):
     def __init__(self) -> None:
         if rclpy is None:  # pragma: no cover
@@ -308,8 +332,9 @@ class StateMachineController(Node):
         self.declare_parameter("follow_linear_speed", 0.14)
         self.declare_parameter("search_sweep_gain", 0.28)
         self.declare_parameter("search_sweep_frequency", 0.9)
-        self.declare_parameter("stuck_progress_timeout_s", 15.0)
+        self.declare_parameter("stuck_progress_timeout_s", 4.9)
         self.declare_parameter("stuck_progress_distance_m", 0.08)
+        self.declare_parameter("recovery_escape_distance_m", 0.16)
         self.state = ControlState(skip_tag1_return=bool(self.get_parameter("skip_tag1_return").value))
         self.explore_linear_speed = float(self.get_parameter("explore_linear_speed").value)
         self.follow_linear_speed = float(self.get_parameter("follow_linear_speed").value)
@@ -317,6 +342,7 @@ class StateMachineController(Node):
         self.search_sweep_frequency = float(self.get_parameter("search_sweep_frequency").value)
         self.stuck_progress_timeout_s = float(self.get_parameter("stuck_progress_timeout_s").value)
         self.stuck_progress_distance_m = float(self.get_parameter("stuck_progress_distance_m").value)
+        self.recovery_escape_distance_m = float(self.get_parameter("recovery_escape_distance_m").value)
         self.last_path_tracking = {"detected": False, "yaw_error": 0.0, "stop_detected": False}
         self.latest_scan_regions = {"right": 10.0, "fright": 10.0, "front": 10.0, "fleft": 10.0, "left": 10.0}
         self.seen_phase_tag_pairs: set[tuple[str, int]] = set()
@@ -409,17 +435,28 @@ class StateMachineController(Node):
 
     def _on_odom(self, msg: Odometry) -> None:
         position = msg.pose.pose.position
+        current_x = float(position.x)
+        current_y = float(position.y)
         if not self.state.odom_initialized:
-            self.state.last_progress_x = float(position.x)
-            self.state.last_progress_y = float(position.y)
+            self.state.last_progress_x = current_x
+            self.state.last_progress_y = current_y
+            self.state.current_odom_x = current_x
+            self.state.current_odom_y = current_y
             self.state.last_progress_monotonic = time.monotonic()
             self.state.odom_initialized = True
             return
-        dx = float(position.x) - self.state.last_progress_x
-        dy = float(position.y) - self.state.last_progress_y
-        if math.hypot(dx, dy) >= self.stuck_progress_distance_m:
-            self.state.last_progress_x = float(position.x)
-            self.state.last_progress_y = float(position.y)
+        self.state.current_odom_x = current_x
+        self.state.current_odom_y = current_y
+        progress_distance = net_progress_distance(
+            self.state.last_progress_x,
+            self.state.last_progress_y,
+            current_x,
+            current_y,
+        )
+        required_distance = self.recovery_escape_distance_m if self.state.recovery_active else self.stuck_progress_distance_m
+        if progress_distance >= required_distance:
+            self.state.last_progress_x = current_x
+            self.state.last_progress_y = current_y
             self.state.last_progress_monotonic = time.monotonic()
             self.state.recovery_active = False
 
@@ -467,6 +504,8 @@ class StateMachineController(Node):
             trigger = right_opening_detected(self.latest_scan_regions) or phase_elapsed > 6.5
         elif phase in (MissionPhase.STATE_TAG5_ORANGE_PATH, MissionPhase.STATE_FINAL_GOAL) and step == 0:
             trigger = left_opening_detected(self.latest_scan_regions) or phase_elapsed > 8.0
+        elif phase is MissionPhase.STATE_FINAL_GOAL and step == 1:
+            trigger = phase_elapsed > 14.0 and float(self.latest_scan_regions.get("front", 0.0)) > 0.30
         if not trigger:
             return False
         steps = route_turn_steps(phase, step)
@@ -505,20 +544,6 @@ class StateMachineController(Node):
             and recently_on_path
         ):
             return self._force_phase_progress(now, 5, "tag4_to_tag5_route_assist")
-        if (
-            self.state.phase is MissionPhase.STATE_FINAL_GOAL
-            and self.state.route_turn_step >= 1
-            and phase_elapsed > 22.0
-            and recently_on_path
-        ):
-            self.state.phase = MissionPhase.STATE_STOP
-            self.log_pub.publish(String(data=json.dumps({
-                "event": "stop_detected",
-                "assisted": True,
-                "source": "orange_goal_route_assist",
-            })))
-            self._publish_phase()
-            return True
         return False
 
     def _force_phase_progress(self, now: float, mission_label: int, source: str) -> bool:
@@ -564,15 +589,21 @@ class StateMachineController(Node):
             self.state,
             seconds_since_progress=seconds_since_progress,
             currently_recovering=self.state.recovery_active or now < self.state.maneuver_until,
+            timeout_s=self.stuck_progress_timeout_s,
         ):
             self.state.scan_until = 0.0
             self.state.last_scan_monotonic = now
             self.state.maneuver_queue = list(stuck_recovery_steps(self.state.phase))
             self.state.recovery_active = True
+            if self.state.odom_initialized:
+                self.state.last_progress_x = self.state.current_odom_x
+                self.state.last_progress_y = self.state.current_odom_y
             self.log_pub.publish(String(data=json.dumps({
                 "event": "stuck_recovery",
                 "phase": self.state.phase.value,
                 "seconds_since_progress": round(seconds_since_progress, 2),
+                "progress_anchor_x": round(self.state.last_progress_x, 3),
+                "progress_anchor_y": round(self.state.last_progress_y, 3),
             })))
             self._advance_maneuver()
         if self.state.maneuver_until > 0.0 and now >= self.state.maneuver_until:
@@ -586,28 +617,32 @@ class StateMachineController(Node):
             cmd.angular.z = self.state.scan_angular_z
             self.cmd_pub.publish(cmd)
             return
+        phase_elapsed = now - self.state.phase_started_monotonic
         if (
-            self.state.phase is MissionPhase.STATE_TAG2_FOUND
-            and self.state.route_turn_step > 0
-            and now - self.state.phase_started_monotonic > 8.0
+            should_force_tag1_timed_assist(self.state.phase, self.state.route_turn_step, phase_elapsed)
             and early_dead_end_detected(self.latest_scan_regions)
         ):
             if self._force_phase_progress(now, 1, "tag1_dead_end_assist"):
                 return
         if (
-            self.state.phase is MissionPhase.STATE_TAG2_FOUND
-            and self.state.route_turn_step > 0
-            and now - self.state.phase_started_monotonic > 7.0
+            should_force_tag1_timed_assist(self.state.phase, self.state.route_turn_step, phase_elapsed)
             and 1 in self.recent_label_times
         ):
             if self._force_phase_progress(now, 1, "tag2_to_tag1_route_assist"):
                 return
         if (
-            self.state.phase is MissionPhase.STATE_TAG1_DEAD_END
-            and now - self.state.phase_started_monotonic > 7.0
+            should_force_tag1_timed_assist(self.state.phase, self.state.route_turn_step, phase_elapsed)
+        ):
+            if self._force_phase_progress(now, 1, "tag2_to_tag1_timed_assist"):
+                return
+        if (
+            should_force_return_tag2_timed_assist(self.state.phase, phase_elapsed)
             and 2 in self.recent_label_times
         ):
             if self._force_phase_progress(now, 2, "tag1_to_tag2_route_assist"):
+                return
+        if should_force_return_tag2_timed_assist(self.state.phase, phase_elapsed):
+            if self._force_phase_progress(now, 2, "tag1_to_tag2_timed_assist"):
                 return
         if self._route_progress_assist(now):
             self.cmd_pub.publish(cmd)
@@ -714,6 +749,26 @@ class StateMachineController(Node):
                 self.cmd_pub.publish(cmd)
                 return
             detected = bool(self.last_path_tracking.get("detected", False))
+            if (
+                self.state.phase is MissionPhase.STATE_FINAL_GOAL
+                and self.state.route_turn_step >= 2
+            ):
+                cmd.linear.x, cmd.angular.z, should_stop = final_goal_commit_command(
+                    float(self.latest_scan_regions.get("front", 0.0)),
+                    float(self.latest_scan_regions.get("left", 0.0)),
+                    float(self.latest_scan_regions.get("right", 0.0)),
+                )
+                if should_stop:
+                    self.state.phase = MissionPhase.STATE_STOP
+                    self.log_pub.publish(String(data=json.dumps({
+                        "event": "stop_detected",
+                        "source": "final_corridor_commit",
+                    })))
+                    self._publish_phase()
+                    self.cmd_pub.publish(Twist())
+                    return
+                self.cmd_pub.publish(cmd)
+                return
             linear_x, angular_z = compute_follow_command(
                 detected,
                 self.state.last_yaw_error,

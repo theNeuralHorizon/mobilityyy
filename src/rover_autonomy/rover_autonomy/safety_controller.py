@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 
 try:
     import rclpy
@@ -27,18 +28,24 @@ def apply_safety_override(
     right_min_m: float,
     hard_stop_distance_m: float,
 ) -> tuple[float, float, bool, str]:
-    if 0.0 < min(front_min_m, front_left_min_m, front_right_min_m) < 0.11:
+    turning_into_left_wall = requested_linear_x >= 0.0 and requested_angular_z > 0.15 and 0.0 < front_left_min_m < 0.18
+    turning_into_right_wall = requested_linear_x >= 0.0 and requested_angular_z < -0.15 and 0.0 < front_right_min_m < 0.18
+    if 0.0 < min(front_min_m, front_left_min_m, front_right_min_m) < 0.11 or turning_into_left_wall or turning_into_right_wall:
         turn_sign = 1.0 if left_min_m >= right_min_m else -1.0
         return -0.10, 0.75 * turn_sign, True, "reverse_escape"
     if 0.0 < front_min_m < hard_stop_distance_m:
         turn_sign = 1.0 if left_min_m >= right_min_m else -1.0
         return 0.0, 0.6 * turn_sign, True, "hard_stop"
     if requested_linear_x > 0.0:
-        if 0.0 < front_left_min_m < 0.16:
-            return min(requested_linear_x, 0.05), -0.45, True, "thin_wall_left"
-        if 0.0 < front_right_min_m < 0.16:
-            return min(requested_linear_x, 0.05), 0.45, True, "thin_wall_right"
+        if 0.0 < front_left_min_m < 0.22:
+            return min(requested_linear_x, 0.04), -0.60, True, "thin_wall_left"
+        if 0.0 < front_right_min_m < 0.22:
+            return min(requested_linear_x, 0.04), 0.60, True, "thin_wall_right"
     return requested_linear_x, requested_angular_z, False, "clear"
+
+
+def should_keep_reverse_escape_latched(now: float, reverse_escape_until: float) -> bool:
+    return now < reverse_escape_until
 
 
 def _sector_min(ranges: list[float], start: int, end: int) -> float:
@@ -63,12 +70,16 @@ class SafetyController(Node):
             raise RuntimeError("rclpy is required to run the safety node")
         super().__init__("safety_controller")
         self.declare_parameter("hard_stop_distance_m", 0.2)
+        self.declare_parameter("reverse_escape_hold_s", 1.15)
         self.declare_parameter("scan_topic", "/r1_mini/lidar")
         self.hard_stop_distance_m = float(self.get_parameter("hard_stop_distance_m").value)
+        self.reverse_escape_hold_s = float(self.get_parameter("reverse_escape_hold_s").value)
         scan_topic = str(self.get_parameter("scan_topic").value)
         self.latest_scan = None
         self.requested_linear_x = 0.0
         self.requested_angular_z = 0.0
+        self.reverse_escape_until = 0.0
+        self.reverse_escape_turn_sign = 1.0
 
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.clearance_pub = self.create_publisher(Bool, "/safety/clearance", 10)
@@ -88,6 +99,7 @@ class SafetyController(Node):
 
     def _tick(self) -> None:
         cmd = Twist()
+        now = time.monotonic()
         if not self.latest_scan:
             self.cmd_pub.publish(cmd)
             self.clearance_pub.publish(Bool(data=True))
@@ -102,16 +114,25 @@ class SafetyController(Node):
         front_right = _window_min(self.latest_scan, (center - max(count // 10, 1)) % count, half_width)
         left = _window_min(self.latest_scan, (center + quarter) % count, half_width)
         right = _window_min(self.latest_scan, (center - quarter) % count, half_width)
-        linear_x, angular_z, active, reason = apply_safety_override(
-            self.requested_linear_x,
-            self.requested_angular_z,
-            front,
-            front_left,
-            front_right,
-            left,
-            right,
-            self.hard_stop_distance_m,
-        )
+        if should_keep_reverse_escape_latched(now, self.reverse_escape_until):
+            linear_x = -0.12
+            angular_z = 0.78 * self.reverse_escape_turn_sign
+            active = True
+            reason = "reverse_escape_latched"
+        else:
+            linear_x, angular_z, active, reason = apply_safety_override(
+                self.requested_linear_x,
+                self.requested_angular_z,
+                front,
+                front_left,
+                front_right,
+                left,
+                right,
+                self.hard_stop_distance_m,
+            )
+            if reason == "reverse_escape":
+                self.reverse_escape_until = now + self.reverse_escape_hold_s
+                self.reverse_escape_turn_sign = 1.0 if angular_z >= 0.0 else -1.0
         cmd.linear.x = linear_x
         cmd.angular.z = angular_z
         self.cmd_pub.publish(cmd)

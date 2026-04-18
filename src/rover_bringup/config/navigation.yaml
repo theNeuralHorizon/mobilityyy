@@ -3,9 +3,11 @@ state_machine_controller:
     explore_linear_speed: 0.18
     follow_linear_speed: 0.14
     skip_tag1_return: false
-    stuck_progress_timeout_s: 15.0
+    stuck_progress_timeout_s: 4.9
     stuck_progress_distance_m: 0.08
+    recovery_escape_distance_m: 0.16
 
 safety_controller:
   ros__parameters:
-    hard_stop_distance_m: 0.2
+    hard_stop_distance_m: 0.22
+    reverse_escape_hold_s: 1.15

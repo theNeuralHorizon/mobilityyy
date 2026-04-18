@@ -10,7 +10,7 @@ import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
 from .arrow_geometry import estimate_arrow_yaw_error, estimate_mask_yaw_error, find_largest_arrow_contour
-from .hsv_utils import lower_roi, make_mask
+from .hsv_utils import build_red_mask, detect_stop_zone, lower_roi, make_mask
 from .tag_mapper import TagMapper
 from .tag_template_matcher import load_tag_templates, match_tag_patch
 
@@ -34,8 +34,6 @@ try:
     from apriltag_msgs.msg import AprilTagDetectionArray
 except ImportError:  # pragma: no cover
     AprilTagDetectionArray = None
-
-
 class VisionProcessor(Node):
     def __init__(self) -> None:
         if rclpy is None:  # pragma: no cover
@@ -47,6 +45,10 @@ class VisionProcessor(Node):
         self.declare_parameter("green_high", [90, 255, 255])
         self.declare_parameter("orange_low", [5, 120, 120])
         self.declare_parameter("orange_high", [25, 255, 255])
+        self.declare_parameter("red_low_1", [0, 120, 100])
+        self.declare_parameter("red_high_1", [10, 255, 255])
+        self.declare_parameter("red_low_2", [170, 120, 100])
+        self.declare_parameter("red_high_2", [180, 255, 255])
         self.declare_parameter("tag_id_to_label", [0, 1, 2, 3, 4])
         self.declare_parameter("debug_gui", False)
         self.declare_parameter("camera_image_topic", "/r1_mini/camera/image_raw")
@@ -279,8 +281,13 @@ class VisionProcessor(Node):
         green_high = self.get_parameter("green_high").value
         orange_low = self.get_parameter("orange_low").value
         orange_high = self.get_parameter("orange_high").value
+        red_low_1 = self.get_parameter("red_low_1").value
+        red_high_1 = self.get_parameter("red_high_1").value
+        red_low_2 = self.get_parameter("red_low_2").value
+        red_high_2 = self.get_parameter("red_high_2").value
         green_mask = make_mask(hsv, green_low, green_high)
         orange_mask = make_mask(hsv, orange_low, orange_high)
+        red_mask = build_red_mask(hsv, red_low_1, red_high_1, red_low_2, red_high_2)
 
         active_color = self.target_color if self.target_color in ("green", "orange") else "none"
         active_mask = None
@@ -292,7 +299,7 @@ class VisionProcessor(Node):
             active_mask = green_mask
         elif active_color == "orange":
             active_mask = orange_mask
-            stop_detected = bool(cv2.countNonZero(orange_mask) > 7000)
+            stop_detected = detect_stop_zone(red_mask, orange_mask)
         if active_mask is not None:
             contour = find_largest_arrow_contour(active_mask)
             if contour is not None and cv2.contourArea(contour) > 300.0:
@@ -321,6 +328,8 @@ class VisionProcessor(Node):
             "forward_confidence": 0.8 if detected else 0.0,
             "direction_tile_seen": detected,
             "stop_detected": stop_detected,
+            "red_zone_detected": stop_detected,
+            "red_zone_pixels": int(cv2.countNonZero(red_mask)),
             "tag_candidate_detected": tag_candidate_detected,
             "tag_candidate_yaw_error": tag_candidate_yaw_error,
             "roi_row_offset": row_offset,

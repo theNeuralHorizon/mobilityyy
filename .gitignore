@@ -21,6 +21,7 @@ Thumbs.db
 # Run artefacts
 artpark_runs/
 output/
+output_gui/
 *.bag
 *.bag.active
 *.db3
