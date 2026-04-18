@@ -72,6 +72,7 @@ class ControlState:
     scan_until: float = 0.0
     scan_angular_z: float = 0.0
     last_scan_monotonic: float = 0.0
+    last_forward_monotonic: float = 0.0
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -145,7 +146,7 @@ def should_start_scan(
         MissionPhase.STATE_RETURN_TAG2,
     ):
         return False
-    if seconds_since_last_scan < 4.0 or seconds_since_last_tag < 2.5:
+    if seconds_since_last_scan < 6.0 or seconds_since_last_tag < 4.0:
         return False
     front = float(regions.get("front", 10.0))
     right = float(regions.get("right", 10.0))
@@ -245,6 +246,7 @@ class StateMachineController(Node):
         self.state.last_scan_monotonic = time.monotonic()
         self.state.scan_until = self.state.last_scan_monotonic + 2.2
         self.state.scan_angular_z = -0.45
+        self.state.last_forward_monotonic = time.monotonic()
 
         self.cmd_pub = self.create_publisher(Twist, "/nav/cmd_vel_raw", 10)
         self.color_pub = self.create_publisher(String, "/vision/target_color", 10)
@@ -342,11 +344,27 @@ class StateMachineController(Node):
             cmd.linear.x = self.state.maneuver_linear_x
             cmd.angular.z = self.state.maneuver_angular_z
             self.cmd_pub.publish(cmd)
+            self.state.last_forward_monotonic = time.monotonic()
             return
         if time.monotonic() < self.state.scan_until:
             cmd.angular.z = self.state.scan_angular_z
             self.cmd_pub.publish(cmd)
             return
+        # Stuck recovery: if no forward motion for 8+ seconds, back up and spin
+        if self.state.last_forward_monotonic > 0.0:
+            stuck_duration = time.monotonic() - self.state.last_forward_monotonic
+            if stuck_duration > 8.0:
+                self.state.last_forward_monotonic = time.monotonic()
+                self.state.maneuver_until = time.monotonic() + 1.2
+                self.state.maneuver_linear_x = -0.10
+                self.state.maneuver_angular_z = 0.0
+                self.state.scan_until = time.monotonic() + 1.2 + 1.5
+                self.state.scan_angular_z = 0.65
+                self.state.last_scan_monotonic = time.monotonic() + 1.2
+                self.get_logger().info(f"STUCK RECOVERY: no forward motion for {stuck_duration:.1f}s, reversing + spinning")
+                cmd.linear.x = -0.10
+                self.cmd_pub.publish(cmd)
+                return
         if self.state.phase in (
             MissionPhase.STATE_START,
             MissionPhase.STATE_TAG2_FOUND,
@@ -370,7 +388,7 @@ class StateMachineController(Node):
                 seconds_since_last_scan=seconds_since_last_scan,
             ):
                 self.state.last_scan_monotonic = time.monotonic()
-                self.state.scan_until = self.state.last_scan_monotonic + 1.7
+                self.state.scan_until = self.state.last_scan_monotonic + 1.0
                 if self.state.phase is MissionPhase.STATE_TAG1_DEAD_END:
                     self.state.scan_angular_z = 0.55
                 else:
@@ -442,6 +460,8 @@ class StateMachineController(Node):
             )
             cmd.linear.x = linear_x
             cmd.angular.z = angular_z
+        if cmd.linear.x > 0.02:
+            self.state.last_forward_monotonic = time.monotonic()
         self.cmd_pub.publish(cmd)
 
 
